@@ -1,4 +1,4 @@
-module github.com/dakasa-co/yggdrasil-integration-kubernetes
+module github.com/dakasa-yggdrasil/integration-kubernetes
 
 go 1.25.0
 

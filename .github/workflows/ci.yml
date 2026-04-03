@@ -22,4 +22,4 @@ jobs:
         run: go test ./...
 
       - name: Build image
-        run: docker build -t yggdrasil-integration-kubernetes:ci .
+        run: docker build -t integration-kubernetes:ci .

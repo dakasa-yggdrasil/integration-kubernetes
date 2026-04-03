@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dakasa-co/yggdrasil-integration-kubernetes/internal/adapter"
-	model "github.com/dakasa-co/yggdrasil-integration-kubernetes/internal/protocol"
+	"github.com/dakasa-yggdrasil/integration-kubernetes/internal/adapter"
+	model "github.com/dakasa-yggdrasil/integration-kubernetes/internal/protocol"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.uber.org/zap"
 )

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	model "github.com/dakasa-co/yggdrasil-integration-kubernetes/internal/protocol"
+	model "github.com/dakasa-yggdrasil/integration-kubernetes/internal/protocol"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

@@ -5,7 +5,7 @@ services:
       - "5672:5672"
       - "15672:15672"
 
-  yggdrasil-integration-kubernetes:
+  integration-kubernetes:
     build: .
     env_file:
       - .env

@@ -1,6 +1,6 @@
-# yggdrasil-integration-kubernetes
+# integration-kubernetes
 
-`yggdrasil-integration-kubernetes` is the target-side ecosystem plugin that closes the installation loop for Yggdrasil products. It speaks RabbitMQ RPC, exposes the adapter handshake expected by `yggdrasil-core`, and applies or observes Kubernetes objects on a real cluster.
+`integration-kubernetes` is the target-side ecosystem plugin that closes the installation loop for Yggdrasil products. It speaks RabbitMQ RPC, exposes the adapter handshake expected by `yggdrasil-core`, and applies or observes Kubernetes objects on a real cluster.
 
 This repository keeps its own local protocol types on purpose. The public wire
 contract lives in [/Users/dakasa/projects/yggdrasil-core/docs/contracts](/Users/dakasa/projects/yggdrasil-core/docs/contracts), not in `yggdrasil-core/model`.

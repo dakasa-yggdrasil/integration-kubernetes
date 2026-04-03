@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	model "github.com/dakasa-co/yggdrasil-integration-kubernetes/internal/protocol"
+	model "github.com/dakasa-yggdrasil/integration-kubernetes/internal/protocol"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 

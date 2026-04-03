@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dakasa-co/yggdrasil-integration-kubernetes/controllers/message"
+	"github.com/dakasa-yggdrasil/integration-kubernetes/controllers/message"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"go.uber.org/zap"
 )

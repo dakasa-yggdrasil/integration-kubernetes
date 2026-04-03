@@ -19,7 +19,7 @@ tasks:
 
   build:image:
     cmds:
-      - docker build -t yggdrasil-integration-kubernetes:local .
+      - docker build -t integration-kubernetes:local .
 
   up:
     deps: [env:init]

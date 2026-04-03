@@ -11,13 +11,13 @@ RUN --mount=type=cache,target=/go/pkg/mod         --mount=type=cache,target=/roo
 
 COPY . .
 
-RUN --mount=type=cache,target=/go/pkg/mod         --mount=type=cache,target=/root/.cache/go-build         go build -o /bin/yggdrasil-integration-kubernetes .
+RUN --mount=type=cache,target=/go/pkg/mod         --mount=type=cache,target=/root/.cache/go-build         go build -o /bin/integration-kubernetes .
 
 FROM gcr.io/distroless/base-debian12:nonroot
 
 WORKDIR /app
 
-COPY --from=build /bin/yggdrasil-integration-kubernetes /app/yggdrasil-integration-kubernetes
+COPY --from=build /bin/integration-kubernetes /app/integration-kubernetes
 
 EXPOSE 8080
-ENTRYPOINT ["/app/yggdrasil-integration-kubernetes"]
+ENTRYPOINT ["/app/integration-kubernetes"]
