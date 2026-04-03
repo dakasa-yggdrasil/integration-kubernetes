@@ -1,0 +1,8 @@
+.git
+.github
+.cursor
+.codex
+.env
+*.log
+dist
+node_modules

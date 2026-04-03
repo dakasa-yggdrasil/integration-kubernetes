@@ -1,0 +1,10 @@
+---
+description: Yggdrasil integration repository rules
+alwaysApply: true
+---
+
+- This repo is a standalone Yggdrasil integration worker.
+- Keep protocol types local and versioned inside the repo.
+- Never couple this repo to internal packages from `yggdrasil-core` or the product monorepo.
+- Keep `describe`, README, tests, and examples in sync with `execute`.
+- Preserve graceful shutdown and readiness semantics.

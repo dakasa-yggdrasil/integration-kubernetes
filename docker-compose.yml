@@ -1,0 +1,22 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  yggdrasil-integration-kubernetes:
+    build: .
+    env_file:
+      - .env
+    environment:
+      BROKER_URL: ${BROKER_URL:-amqp://guest:guest@rabbitmq:5672/}
+      HEALTHCHECK_PORT: ${HEALTHCHECK_PORT:-8080}
+      HTTP_READ_HEADER_TIMEOUT_SECONDS: ${HTTP_READ_HEADER_TIMEOUT_SECONDS:-10s}
+      HTTP_READ_TIMEOUT_SECONDS: ${HTTP_READ_TIMEOUT_SECONDS:-30s}
+      HTTP_WRITE_TIMEOUT_SECONDS: ${HTTP_WRITE_TIMEOUT_SECONDS:-30s}
+      HTTP_IDLE_TIMEOUT_SECONDS: ${HTTP_IDLE_TIMEOUT_SECONDS:-120s}
+    depends_on:
+      - rabbitmq
+    ports:
+      - "${HEALTHCHECK_PORT:-8080}:${HEALTHCHECK_PORT:-8080}"

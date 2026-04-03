@@ -1,0 +1,5 @@
+This repository is a standalone Yggdrasil integration worker.
+Keep adapter protocol types local.
+Do not depend on Yggdrasil monorepo internals.
+Keep describe/execute/tests/examples/README aligned in every capability change.
+Preserve graceful shutdown and readiness behavior.

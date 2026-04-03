@@ -1,0 +1,35 @@
+version: '3'
+
+dotenv:
+  - .env
+
+tasks:
+  env:init:
+    cmds:
+      - if [ ! -f ./.env ]; then cp ./.env.example ./.env; fi
+
+  config:
+    deps: [env:init]
+    cmds:
+      - docker compose config >/dev/null
+
+  test:
+    cmds:
+      - go test ./...
+
+  build:image:
+    cmds:
+      - docker build -t yggdrasil-integration-kubernetes:local .
+
+  up:
+    deps: [env:init]
+    cmds:
+      - docker compose up --build -d
+
+  down:
+    cmds:
+      - docker compose down --remove-orphans
+
+  logs:
+    cmds:
+      - docker compose logs -f
