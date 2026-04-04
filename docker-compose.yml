@@ -3,6 +3,7 @@ services:
     build:
       context: ${INTEGRATION_KUBERNETES_BUILD_CONTEXT:-.}
       dockerfile: ${INTEGRATION_KUBERNETES_DOCKERFILE:-Dockerfile}
+    restart: unless-stopped
     env_file:
       - .env
     environment:
