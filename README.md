@@ -29,6 +29,19 @@ contract lives in [/Users/dakasa/projects/yggdrasil-core/docs/contracts](/Users/
 go run .
 ```
 
+## GitHub dogfooding
+
+This repository now ships:
+
+- `.github/workflows/emit-deploy-event.yml`
+- `.github/workflows/deploy.yml`
+
+`emit-deploy-event.yml` uses the official GitHub Action
+[`dakasa-yggdrasil/action-emit-workflow-run`](https://github.com/dakasa-yggdrasil/action-emit-workflow-run)
+to send one workflow run request into `yggdrasil-core`. The core bootstrap
+workflow `global/ecosystem-repository-commit` then dispatches this repository's
+`deploy.yml`.
+
 ## Instance configuration
 
 The integration instance can use:

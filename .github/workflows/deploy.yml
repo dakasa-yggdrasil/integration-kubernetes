@@ -1,0 +1,87 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      component_kind:
+        description: Ecosystem component kind.
+        required: false
+        default: integration
+        type: string
+      component_name:
+        description: Stable ecosystem component name.
+        required: false
+        default: integration-kubernetes
+        type: string
+      commit_sha:
+        description: Source commit SHA forwarded by the core workflow.
+        required: false
+        default: ""
+        type: string
+      actor:
+        description: Actor that triggered the source event.
+        required: false
+        default: ""
+        type: string
+      event_name:
+        description: Source event name.
+        required: false
+        default: workflow_dispatch
+        type: string
+      environment:
+        description: Target environment label.
+        required: false
+        default: production
+        type: string
+      commit_message:
+        description: Optional source commit message.
+        required: false
+        default: ""
+        type: string
+      source_run_url:
+        description: Optional source GitHub Actions run URL.
+        required: false
+        default: ""
+        type: string
+      source_run_id:
+        description: Optional source GitHub Actions run ID.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Summarize deploy request
+        shell: bash
+        run: |
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Yggdrasil integration deploy request
+
+          - Component: \`${{ inputs.component_kind }}:${{ inputs.component_name }}\`
+          - Environment: \`${{ inputs.environment }}\`
+          - Source event: \`${{ inputs.event_name }}\`
+          - Source actor: \`${{ inputs.actor || 'unknown' }}\`
+          - Source SHA: \`${{ inputs.commit_sha || github.sha }}\`
+          EOF
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build image
+        run: docker build -t integration-kubernetes:ci .
+
