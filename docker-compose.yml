@@ -1,12 +1,8 @@
 services:
-  rabbitmq:
-    image: rabbitmq:3.13-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-
   integration-kubernetes:
-    build: .
+    build:
+      context: ${INTEGRATION_KUBERNETES_BUILD_CONTEXT:-.}
+      dockerfile: ${INTEGRATION_KUBERNETES_DOCKERFILE:-Dockerfile}
     env_file:
       - .env
     environment:
@@ -16,7 +12,5 @@ services:
       HTTP_READ_TIMEOUT_SECONDS: ${HTTP_READ_TIMEOUT_SECONDS:-30s}
       HTTP_WRITE_TIMEOUT_SECONDS: ${HTTP_WRITE_TIMEOUT_SECONDS:-30s}
       HTTP_IDLE_TIMEOUT_SECONDS: ${HTTP_IDLE_TIMEOUT_SECONDS:-120s}
-    depends_on:
-      - rabbitmq
-    ports:
-      - "${HEALTHCHECK_PORT:-8080}:${HEALTHCHECK_PORT:-8080}"
+    expose:
+      - "${HEALTHCHECK_PORT:-8080}"

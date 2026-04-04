@@ -3,6 +3,9 @@ version: '3'
 dotenv:
   - .env
 
+vars:
+  COMPOSE_ARGS: -f docker-compose.yml -f docker-compose.standalone.yml
+
 tasks:
   env:init:
     cmds:
@@ -11,7 +14,7 @@ tasks:
   config:
     deps: [env:init]
     cmds:
-      - docker compose config >/dev/null
+      - docker compose {{.COMPOSE_ARGS}} config >/dev/null
 
   test:
     cmds:
@@ -24,12 +27,12 @@ tasks:
   up:
     deps: [env:init]
     cmds:
-      - docker compose up --build -d
+      - docker compose {{.COMPOSE_ARGS}} up --build -d
 
   down:
     cmds:
-      - docker compose down --remove-orphans
+      - docker compose {{.COMPOSE_ARGS}} down --remove-orphans
 
   logs:
     cmds:
-      - docker compose logs -f
+      - docker compose {{.COMPOSE_ARGS}} logs -f
