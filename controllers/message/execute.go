@@ -13,16 +13,22 @@ import (
 
 func executeHandler(conn *amqp.Connection, logger *zap.Logger) ConsumerHandler {
 	return func(ctx context.Context, d amqp.Delivery) error {
-		var envelope struct {
-			Operation string `json:"operation"`
-		}
-		if err := json.Unmarshal(d.Body, &envelope); err != nil {
+		var request model.AdapterExecuteIntegrationRequest
+		if err := json.Unmarshal(d.Body, &request); err != nil {
 			return replyFailure(ctx, conn, d, "bad_request", err, logger)
 		}
 
-		operation := adapter.NormalizeExecuteOperation(envelope.Operation)
+		operation := adapter.NormalizeExecuteOperation(request.Operation)
 		if !adapter.SupportsExecuteOperation(operation) {
-			return replyFailure(ctx, conn, d, "unsupported_operation", fmt.Errorf("unsupported operation %q", envelope.Operation), logger)
+			return replyFailure(ctx, conn, d, "unsupported_operation", fmt.Errorf("unsupported operation %q", request.Operation), logger)
+		}
+
+		if len(request.Input) > 0 || request.Integration.Instance.Name != "" || request.Integration.Type.Name != "" {
+			response, err := adapter.Execute(ctx, request)
+			if err != nil {
+				return replyFailure(ctx, conn, d, "execute_failed", err, logger)
+			}
+			return replySuccess(ctx, conn, d, response, logger)
 		}
 
 		switch operation {
@@ -48,6 +54,6 @@ func executeHandler(conn *amqp.Connection, logger *zap.Logger) ConsumerHandler {
 			return replySuccess(ctx, conn, d, response, logger)
 		}
 
-		return replyFailure(ctx, conn, d, "unsupported_operation", fmt.Errorf("unsupported operation %q", envelope.Operation), logger)
+		return replyFailure(ctx, conn, d, "unsupported_operation", fmt.Errorf("unsupported operation %q", request.Operation), logger)
 	}
 }

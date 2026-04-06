@@ -63,6 +63,8 @@ type fakeExecutor struct {
 	objects map[string]*unstructured.Unstructured
 }
 
+var newKubernetesExecutor = buildExecutor
+
 // Describe returns the normalized contract exposed by this adapter.
 func Describe() model.AdapterDescribeResponse {
 	return model.AdapterDescribeResponse{
@@ -165,6 +167,123 @@ func SupportsExecuteOperation(value string) bool {
 	return false
 }
 
+func decodeGenericDeclarativeApplyRequest(req model.AdapterExecuteIntegrationRequest) (model.AdapterDeclarativeApplyRequest, error) {
+	if req.Integration.Instance.Name == "" || req.Integration.Type.Name == "" {
+		return model.AdapterDeclarativeApplyRequest{}, fmt.Errorf("generic declarative_apply requires integration context")
+	}
+
+	objects := objectSlice(req.Input["objects"])
+	if len(objects) == 0 {
+		return model.AdapterDeclarativeApplyRequest{}, fmt.Errorf("generic declarative_apply requires at least one object")
+	}
+
+	return model.AdapterDeclarativeApplyRequest{
+		Operation: OperationDeclarativeApply,
+		Context:   decodeGenericInstallationContext(req.Input["context"]),
+		Target: model.AdapterTargetIntegrationContext{
+			Type:         req.Integration.Type,
+			TypeSpec:     req.Integration.TypeSpec,
+			Instance:     req.Integration.Instance,
+			InstanceSpec: req.Integration.InstanceSpec,
+		},
+		Objects:   objects,
+		Namespace: stringValue(req.Input["namespace"]),
+		Reconcile: decodeGenericReconcile(req.Input["reconcile"]),
+	}, nil
+}
+
+func decodeGenericObserveObjectsRequest(req model.AdapterExecuteIntegrationRequest) (model.AdapterObserveObjectsRequest, error) {
+	if req.Integration.Instance.Name == "" || req.Integration.Type.Name == "" {
+		return model.AdapterObserveObjectsRequest{}, fmt.Errorf("generic observe_objects requires integration context")
+	}
+
+	objects := objectSlice(req.Input["objects"])
+	if len(objects) == 0 {
+		return model.AdapterObserveObjectsRequest{}, fmt.Errorf("generic observe_objects requires at least one object")
+	}
+
+	return model.AdapterObserveObjectsRequest{
+		Operation: OperationObserveObjects,
+		Context:   decodeGenericInstallationContext(req.Input["context"]),
+		Target: model.AdapterTargetIntegrationContext{
+			Type:         req.Integration.Type,
+			TypeSpec:     req.Integration.TypeSpec,
+			Instance:     req.Integration.Instance,
+			InstanceSpec: req.Integration.InstanceSpec,
+		},
+		Objects:   objects,
+		Namespace: stringValue(req.Input["namespace"]),
+	}, nil
+}
+
+func decodeGenericInstallationContext(value any) model.AdapterGenerateInstallationContext {
+	object := mapValue(value)
+	product := mapValue(object["product"])
+	return model.AdapterGenerateInstallationContext{
+		Product: model.ManifestReference{
+			Kind:      stringValue(product["kind"]),
+			Namespace: stringValue(product["namespace"]),
+			Name:      stringValue(product["name"]),
+		},
+		Component: stringValue(object["component"]),
+		Category:  stringValue(object["category"]),
+		Class:     stringValue(object["class"]),
+	}
+}
+
+func decodeGenericReconcile(value any) model.ProductReconcileSpec {
+	object := mapValue(value)
+	return model.ProductReconcileSpec{
+		Strategy: stringValue(object["strategy"]),
+		Prune:    boolValue(object["prune"]),
+		Wait:     boolValue(object["wait"]),
+	}
+}
+
+func Execute(ctx context.Context, req model.AdapterExecuteIntegrationRequest) (model.AdapterExecuteIntegrationResponse, error) {
+	operation := NormalizeExecuteOperation(req.Operation)
+	if !SupportsExecuteOperation(operation) {
+		return model.AdapterExecuteIntegrationResponse{}, fmt.Errorf("unsupported operation %q", req.Operation)
+	}
+
+	switch operation {
+	case OperationDeclarativeApply:
+		typedReq, err := decodeGenericDeclarativeApplyRequest(req)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		response, err := DeclarativeApply(ctx, typedReq)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		return model.AdapterExecuteIntegrationResponse{
+			Operation:  operation,
+			Capability: firstNonEmptyString(strings.TrimSpace(req.Capability), operation),
+			Status:     "applied",
+			Output:     response,
+			Metadata:   response.Metadata,
+		}, nil
+	case OperationObserveObjects:
+		typedReq, err := decodeGenericObserveObjectsRequest(req)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		response, err := ObserveObjects(ctx, typedReq)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		return model.AdapterExecuteIntegrationResponse{
+			Operation:  operation,
+			Capability: firstNonEmptyString(strings.TrimSpace(req.Capability), operation),
+			Status:     response.Status,
+			Output:     response,
+			Metadata:   response.Metadata,
+		}, nil
+	default:
+		return model.AdapterExecuteIntegrationResponse{}, fmt.Errorf("unsupported operation %q", req.Operation)
+	}
+}
+
 // DeclarativeApply applies one desired object set to a Kubernetes target.
 func DeclarativeApply(ctx context.Context, req model.AdapterDeclarativeApplyRequest) (model.AdapterDeclarativeApplyResponse, error) {
 	cfg, err := resolveClusterConfig(req.Target.InstanceSpec)
@@ -172,7 +291,7 @@ func DeclarativeApply(ctx context.Context, req model.AdapterDeclarativeApplyRequ
 		return model.AdapterDeclarativeApplyResponse{}, err
 	}
 
-	executor, err := buildExecutor(cfg)
+	executor, err := newKubernetesExecutor(cfg)
 	if err != nil {
 		return model.AdapterDeclarativeApplyResponse{}, err
 	}
@@ -213,7 +332,7 @@ func ObserveObjects(ctx context.Context, req model.AdapterObserveObjectsRequest)
 		return model.AdapterObserveObjectsResponse{}, err
 	}
 
-	executor, err := buildExecutor(cfg)
+	executor, err := newKubernetesExecutor(cfg)
 	if err != nil {
 		return model.AdapterObserveObjectsResponse{}, err
 	}
@@ -563,9 +682,50 @@ func stringValue(value any) string {
 	switch typed := value.(type) {
 	case string:
 		return typed
+	case nil:
+		return ""
 	default:
 		return fmt.Sprint(value)
 	}
+}
+
+func boolValue(value any) bool {
+	typed, ok := value.(bool)
+	return ok && typed
+}
+
+func mapValue(value any) map[string]any {
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	return typed
+}
+
+func objectSlice(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if object, ok := item.(map[string]any); ok {
+				out = append(out, object)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // newFakeExecutor is used by tests.

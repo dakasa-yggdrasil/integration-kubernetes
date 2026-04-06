@@ -121,6 +121,30 @@ type IntegrationInstanceExecutionSpec struct {
 	MaxBatchSize  int  `json:"max_batch_size,omitempty"`
 }
 
+type AdapterExecuteIntegrationContext struct {
+	Type         ManifestReference               `json:"type"`
+	TypeSpec     IntegrationTypeManifestSpec     `json:"type_spec"`
+	Instance     ManifestReference               `json:"instance"`
+	InstanceSpec IntegrationInstanceManifestSpec `json:"instance_spec"`
+}
+
+type AdapterExecuteIntegrationRequest struct {
+	Operation   string                           `json:"operation"`
+	Capability  string                           `json:"capability,omitempty"`
+	Input       map[string]any                   `json:"input,omitempty"`
+	Auth        map[string]any                   `json:"auth,omitempty"`
+	Metadata    map[string]any                   `json:"metadata,omitempty"`
+	Integration AdapterExecuteIntegrationContext `json:"integration"`
+}
+
+type AdapterExecuteIntegrationResponse struct {
+	Operation  string         `json:"operation,omitempty"`
+	Capability string         `json:"capability,omitempty"`
+	Status     string         `json:"status,omitempty"`
+	Output     any            `json:"output,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+}
+
 type AdapterDescribeRequest struct {
 	Provider        string `json:"provider"`
 	ExpectedVersion string `json:"expected_version,omitempty"`

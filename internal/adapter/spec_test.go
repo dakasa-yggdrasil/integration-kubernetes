@@ -138,3 +138,75 @@ func TestFakeExecutorObserveMissingObject(t *testing.T) {
 		t.Fatalf("expected not_found, got %q", observed[0].Status)
 	}
 }
+
+func TestExecuteSupportsGenericDeclarativeApplyRequests(t *testing.T) {
+	previous := newKubernetesExecutor
+	newKubernetesExecutor = func(cfg clusterConfig) (kubernetesExecutor, error) {
+		return newFakeExecutor(), nil
+	}
+	defer func() {
+		newKubernetesExecutor = previous
+	}()
+
+	response, err := Execute(context.Background(), model.AdapterExecuteIntegrationRequest{
+		Operation:  OperationDeclarativeApply,
+		Capability: OperationDeclarativeApply,
+		Input: map[string]any{
+			"namespace": "platform-system",
+			"objects": []any{
+				map[string]any{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata": map[string]any{
+						"name": "platform-settings",
+					},
+					"data": map[string]any{
+						"region": "sa-east1",
+					},
+				},
+			},
+			"reconcile": map[string]any{
+				"strategy": "server_side_apply",
+				"wait":     true,
+			},
+		},
+		Integration: model.AdapterExecuteIntegrationContext{
+			Type: model.ManifestReference{
+				Namespace: "global",
+				Name:      "kubernetes",
+			},
+			Instance: model.ManifestReference{
+				Namespace: "global",
+				Name:      "kubernetes-platform-prod",
+			},
+			InstanceSpec: model.IntegrationInstanceManifestSpec{
+				Credentials: map[string]any{
+					"kubeconfig": "apiVersion: v1\nclusters: []\ncontexts: []\ncurrent-context: ''\nkind: Config\npreferences: {}\nusers: []\n",
+				},
+				Config: map[string]any{
+					"default_namespace": "default",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if response.Status != "applied" {
+		t.Fatalf("status = %q, want applied", response.Status)
+	}
+
+	output, ok := response.Output.(model.AdapterDeclarativeApplyResponse)
+	if !ok {
+		t.Fatalf("output type = %T, want AdapterDeclarativeApplyResponse", response.Output)
+	}
+	if !output.Applied {
+		t.Fatal("expected apply response to report applied=true")
+	}
+	if len(output.Resources) != 1 {
+		t.Fatalf("resources = %d, want 1", len(output.Resources))
+	}
+	if output.Resources[0].Namespace != "platform-system" {
+		t.Fatalf("resource namespace = %q, want platform-system", output.Resources[0].Namespace)
+	}
+}
