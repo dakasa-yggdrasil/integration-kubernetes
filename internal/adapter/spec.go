@@ -26,9 +26,17 @@ const (
 	Provider                  = "kubernetes"
 	AdapterVersion            = "1.0.0"
 	OperationDeclarativeApply = "declarative_apply"
-	OperationObserveObjects   = "observe_objects"
-	ModeServerSideApply       = "server_side_apply"
-	DefaultFieldManager       = "yggdrasil"
+	// OperationApplyManifest is the single-object variant of
+	// declarative_apply. Callers pass exactly one Kubernetes object under
+	// with.manifest; the adapter wraps it as a 1-element slice and runs
+	// the same server-side apply pipeline. integration_quickstart steps
+	// (apply-service-account, apply-adapter-deployment, apply-credentials-secret)
+	// compile to this operation — one manifest per step gives adopters
+	// explicit, auditable YAML rather than opaque object arrays.
+	OperationApplyManifest  = "apply_manifest"
+	OperationObserveObjects = "observe_objects"
+	ModeServerSideApply     = "server_side_apply"
+	DefaultFieldManager     = "yggdrasil"
 
 	QueueDescribe = "yggdrasil.adapter.kubernetes.describe"
 	QueueExecute  = "yggdrasil.adapter.kubernetes.execute"
@@ -36,6 +44,7 @@ const (
 
 var SupportedExecuteOperations = []string{
 	OperationDeclarativeApply,
+	OperationApplyManifest,
 	OperationObserveObjects,
 }
 
@@ -192,6 +201,44 @@ func decodeGenericDeclarativeApplyRequest(req model.AdapterExecuteIntegrationReq
 	}, nil
 }
 
+// decodeGenericApplyManifestRequest shapes an apply_manifest request into
+// the AdapterDeclarativeApplyRequest used by the shared apply pipeline.
+// The with.manifest field is expected to be a single Kubernetes object
+// (map); it is wrapped as a 1-element slice so DeclarativeApply can handle
+// it unchanged. Bubble up a clear error when the shape is wrong instead
+// of silently persisting nothing.
+func decodeGenericApplyManifestRequest(req model.AdapterExecuteIntegrationRequest) (model.AdapterDeclarativeApplyRequest, error) {
+	if req.Integration.Instance.Name == "" || req.Integration.Type.Name == "" {
+		return model.AdapterDeclarativeApplyRequest{}, fmt.Errorf("apply_manifest requires integration context")
+	}
+
+	raw, ok := req.Input["manifest"]
+	if !ok {
+		return model.AdapterDeclarativeApplyRequest{}, fmt.Errorf("apply_manifest requires with.manifest")
+	}
+	manifestMap, ok := raw.(map[string]any)
+	if !ok {
+		return model.AdapterDeclarativeApplyRequest{}, fmt.Errorf("apply_manifest: with.manifest must be an object")
+	}
+	if len(manifestMap) == 0 {
+		return model.AdapterDeclarativeApplyRequest{}, fmt.Errorf("apply_manifest: with.manifest is empty")
+	}
+
+	return model.AdapterDeclarativeApplyRequest{
+		Operation: OperationApplyManifest,
+		Context:   decodeGenericInstallationContext(req.Input["context"]),
+		Target: model.AdapterTargetIntegrationContext{
+			Type:         req.Integration.Type,
+			TypeSpec:     req.Integration.TypeSpec,
+			Instance:     req.Integration.Instance,
+			InstanceSpec: req.Integration.InstanceSpec,
+		},
+		Objects:   []map[string]any{manifestMap},
+		Namespace: stringValue(req.Input["namespace"]),
+		Reconcile: decodeGenericReconcile(req.Input["reconcile"]),
+	}, nil
+}
+
 func decodeGenericObserveObjectsRequest(req model.AdapterExecuteIntegrationRequest) (model.AdapterObserveObjectsRequest, error) {
 	if req.Integration.Instance.Name == "" || req.Integration.Type.Name == "" {
 		return model.AdapterObserveObjectsRequest{}, fmt.Errorf("generic observe_objects requires integration context")
@@ -249,6 +296,22 @@ func Execute(ctx context.Context, req model.AdapterExecuteIntegrationRequest) (m
 	switch operation {
 	case OperationDeclarativeApply:
 		typedReq, err := decodeGenericDeclarativeApplyRequest(req)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		response, err := DeclarativeApply(ctx, typedReq)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		return model.AdapterExecuteIntegrationResponse{
+			Operation:  operation,
+			Capability: firstNonEmptyString(strings.TrimSpace(req.Capability), operation),
+			Status:     "applied",
+			Output:     response,
+			Metadata:   response.Metadata,
+		}, nil
+	case OperationApplyManifest:
+		typedReq, err := decodeGenericApplyManifestRequest(req)
 		if err != nil {
 			return model.AdapterExecuteIntegrationResponse{}, err
 		}
@@ -375,6 +438,12 @@ func describeActionCatalog() []model.IntegrationActionDefinition {
 		{
 			Name:          OperationDeclarativeApply,
 			Description:   "Apply a desired object set to a Kubernetes cluster using server-side apply.",
+			ResourceTypes: []string{"object"},
+			Idempotent:    true,
+		},
+		{
+			Name:          OperationApplyManifest,
+			Description:   "Apply a single Kubernetes manifest object using server-side apply.",
 			ResourceTypes: []string{"object"},
 			Idempotent:    true,
 		},
@@ -743,6 +812,8 @@ func newFakeExecutor(objects ...*unstructured.Unstructured) kubernetesExecutor {
 				"v1": {
 					{Name: "configmaps", SingularName: "configmap", Namespaced: true, Kind: "ConfigMap"},
 					{Name: "namespaces", SingularName: "namespace", Namespaced: false, Kind: "Namespace"},
+					{Name: "serviceaccounts", SingularName: "serviceaccount", Namespaced: true, Kind: "ServiceAccount"},
+					{Name: "secrets", SingularName: "secret", Namespaced: true, Kind: "Secret"},
 				},
 			},
 		},

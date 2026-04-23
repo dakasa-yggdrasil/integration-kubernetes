@@ -17,8 +17,8 @@ func TestDescribe(t *testing.T) {
 	if response.Adapter.Queues.Execute != QueueExecute {
 		t.Fatalf("expected execute queue %q, got %q", QueueExecute, response.Adapter.Queues.Execute)
 	}
-	if len(response.ActionCatalog) != 2 {
-		t.Fatalf("expected 2 actions, got %d", len(response.ActionCatalog))
+	if len(response.ActionCatalog) != len(SupportedExecuteOperations) {
+		t.Fatalf("expected %d actions, got %d", len(SupportedExecuteOperations), len(response.ActionCatalog))
 	}
 	if len(response.Execution.IdempotentActions) != len(SupportedExecuteOperations) {
 		t.Fatalf("idempotent actions = %#v, want %d operations", response.Execution.IdempotentActions, len(SupportedExecuteOperations))
@@ -208,5 +208,114 @@ func TestExecuteSupportsGenericDeclarativeApplyRequests(t *testing.T) {
 	}
 	if output.Resources[0].Namespace != "platform-system" {
 		t.Fatalf("resource namespace = %q, want platform-system", output.Resources[0].Namespace)
+	}
+}
+
+// TestExecuteSupportsApplyManifestRequests exercises the apply_manifest
+// operation, which is the single-object variant of declarative_apply. The
+// workflow step input carries one Kubernetes object under with.manifest;
+// the adapter wraps it as a 1-element slice and reuses the same apply
+// pipeline (server-side apply via dynamic client). This is the operation
+// that integration_quickstart templates compile to for adapter-deployment,
+// service-account, and credential-secret steps.
+func TestExecuteSupportsApplyManifestRequests(t *testing.T) {
+	previous := newKubernetesExecutor
+	newKubernetesExecutor = func(cfg clusterConfig) (kubernetesExecutor, error) {
+		return newFakeExecutor(), nil
+	}
+	defer func() {
+		newKubernetesExecutor = previous
+	}()
+
+	response, err := Execute(context.Background(), model.AdapterExecuteIntegrationRequest{
+		Operation:  OperationApplyManifest,
+		Capability: OperationApplyManifest,
+		Input: map[string]any{
+			"namespace": "yggdrasil-adapters",
+			"manifest": map[string]any{
+				"apiVersion": "v1",
+				"kind":       "ServiceAccount",
+				"metadata": map[string]any{
+					"name":      "schema-migrations-goose-postgres",
+					"namespace": "yggdrasil-adapters",
+				},
+			},
+		},
+		Integration: model.AdapterExecuteIntegrationContext{
+			Type: model.ManifestReference{
+				Namespace: "global",
+				Name:      "kubernetes",
+			},
+			Instance: model.ManifestReference{
+				Namespace: "global",
+				Name:      "kubernetes-platform-prod",
+			},
+			InstanceSpec: model.IntegrationInstanceManifestSpec{
+				Credentials: map[string]any{
+					"kubeconfig": "apiVersion: v1\nclusters: []\ncontexts: []\ncurrent-context: ''\nkind: Config\npreferences: {}\nusers: []\n",
+				},
+				Config: map[string]any{
+					"default_namespace": "default",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if response.Status != "applied" {
+		t.Fatalf("status = %q, want applied", response.Status)
+	}
+	if response.Operation != OperationApplyManifest {
+		t.Fatalf("operation echoed as %q, want %q", response.Operation, OperationApplyManifest)
+	}
+
+	output, ok := response.Output.(model.AdapterDeclarativeApplyResponse)
+	if !ok {
+		t.Fatalf("output type = %T, want AdapterDeclarativeApplyResponse", response.Output)
+	}
+	if !output.Applied {
+		t.Fatal("expected apply response to report applied=true")
+	}
+	if len(output.Resources) != 1 {
+		t.Fatalf("resources = %d, want 1", len(output.Resources))
+	}
+	if output.Resources[0].Kind != "ServiceAccount" {
+		t.Fatalf("resource kind = %q, want ServiceAccount", output.Resources[0].Kind)
+	}
+	if output.Resources[0].Name != "schema-migrations-goose-postgres" {
+		t.Fatalf("resource name = %q", output.Resources[0].Name)
+	}
+}
+
+func TestExecuteApplyManifestRejectsMissingManifest(t *testing.T) {
+	_, err := Execute(context.Background(), model.AdapterExecuteIntegrationRequest{
+		Operation:  OperationApplyManifest,
+		Capability: OperationApplyManifest,
+		Input:      map[string]any{},
+		Integration: model.AdapterExecuteIntegrationContext{
+			Type:     model.ManifestReference{Namespace: "global", Name: "kubernetes"},
+			Instance: model.ManifestReference{Namespace: "global", Name: "kubernetes-platform-prod"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected missing with.manifest to fail")
+	}
+}
+
+func TestExecuteApplyManifestRejectsNonObjectManifest(t *testing.T) {
+	_, err := Execute(context.Background(), model.AdapterExecuteIntegrationRequest{
+		Operation:  OperationApplyManifest,
+		Capability: OperationApplyManifest,
+		Input: map[string]any{
+			"manifest": "not an object",
+		},
+		Integration: model.AdapterExecuteIntegrationContext{
+			Type:     model.ManifestReference{Namespace: "global", Name: "kubernetes"},
+			Instance: model.ManifestReference{Namespace: "global", Name: "kubernetes-platform-prod"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected non-object with.manifest to fail")
 	}
 }
