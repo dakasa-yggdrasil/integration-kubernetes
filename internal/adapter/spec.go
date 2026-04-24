@@ -75,18 +75,37 @@ type fakeExecutor struct {
 var newKubernetesExecutor = buildExecutor
 
 // Describe returns the normalized contract exposed by this adapter.
+// Transport + addressing mirror what main.go chose at startup via
+// YGGDRASIL_TRANSPORT (default http_json). The core uses this to
+// verify the adapter's live shape matches the stored
+// integration_type manifest — mismatches abort execution before a
+// dispatch crosses the wire.
 func Describe() model.AdapterDescribeResponse {
+	transport := strings.ToLower(strings.TrimSpace(os.Getenv("YGGDRASIL_TRANSPORT")))
+	if transport == "" {
+		transport = "http"
+	}
+	adapterSpec := model.IntegrationAdapterSpec{
+		Version:        AdapterVersion,
+		TimeoutSeconds: 30,
+	}
+	switch transport {
+	case "amqp", "rabbitmq":
+		adapterSpec.Transport = "rabbitmq"
+		adapterSpec.Queues = model.IntegrationAdapterQueue{
+			Describe: QueueDescribe,
+			Execute:  QueueExecute,
+		}
+	default:
+		adapterSpec.Transport = "http_json"
+		adapterSpec.Endpoints = model.IntegrationAdapterRoute{
+			Describe: "/rpc/describe",
+			Execute:  "/rpc/execute",
+		}
+	}
 	return model.AdapterDescribeResponse{
 		Provider: Provider,
-		Adapter: model.IntegrationAdapterSpec{
-			Transport: "rabbitmq",
-			Version:   AdapterVersion,
-			Queues: model.IntegrationAdapterQueue{
-				Describe: QueueDescribe,
-				Execute:  QueueExecute,
-			},
-			TimeoutSeconds: 30,
-		},
+		Adapter:  adapterSpec,
 		Capabilities: []string{"describe", "execute"},
 		CredentialSchema: model.IntegrationSchemaSpec{
 			Mode: "inline",

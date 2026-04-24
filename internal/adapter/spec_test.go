@@ -9,19 +9,34 @@ import (
 )
 
 func TestDescribe(t *testing.T) {
+	t.Setenv("YGGDRASIL_TRANSPORT", "http")
 	response := Describe()
 
 	if response.Provider != Provider {
 		t.Fatalf("expected provider %q, got %q", Provider, response.Provider)
 	}
-	if response.Adapter.Queues.Execute != QueueExecute {
-		t.Fatalf("expected execute queue %q, got %q", QueueExecute, response.Adapter.Queues.Execute)
+	if response.Adapter.Transport != "http_json" {
+		t.Fatalf("expected http_json transport when YGGDRASIL_TRANSPORT=http, got %q", response.Adapter.Transport)
+	}
+	if response.Adapter.Endpoints.Execute != "/rpc/execute" {
+		t.Fatalf("expected /rpc/execute endpoint, got %q", response.Adapter.Endpoints.Execute)
 	}
 	if len(response.ActionCatalog) != len(SupportedExecuteOperations) {
 		t.Fatalf("expected %d actions, got %d", len(SupportedExecuteOperations), len(response.ActionCatalog))
 	}
 	if len(response.Execution.IdempotentActions) != len(SupportedExecuteOperations) {
 		t.Fatalf("idempotent actions = %#v, want %d operations", response.Execution.IdempotentActions, len(SupportedExecuteOperations))
+	}
+}
+
+func TestDescribeAMQPWhenTransportIsRabbitMQ(t *testing.T) {
+	t.Setenv("YGGDRASIL_TRANSPORT", "amqp")
+	response := Describe()
+	if response.Adapter.Transport != "rabbitmq" {
+		t.Fatalf("expected rabbitmq transport when YGGDRASIL_TRANSPORT=amqp, got %q", response.Adapter.Transport)
+	}
+	if response.Adapter.Queues.Execute != QueueExecute {
+		t.Fatalf("expected execute queue %q, got %q", QueueExecute, response.Adapter.Queues.Execute)
 	}
 }
 

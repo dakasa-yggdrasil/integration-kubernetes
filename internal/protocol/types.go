@@ -34,11 +34,24 @@ type IntegrationTypeManifestSpec struct {
 type IntegrationAdapterSpec struct {
 	Transport      string                  `json:"transport"`
 	Version        string                  `json:"version"`
-	Queues         IntegrationAdapterQueue `json:"queues"`
+	Queues         IntegrationAdapterQueue `json:"queues,omitempty"`
+	Endpoints      IntegrationAdapterRoute `json:"endpoints,omitempty"`
 	TimeoutSeconds int                     `json:"timeout_seconds,omitempty"`
 }
 
 type IntegrationAdapterQueue struct {
+	Describe string `json:"describe,omitempty"`
+	Discover string `json:"discover,omitempty"`
+	Read     string `json:"read,omitempty"`
+	Execute  string `json:"execute,omitempty"`
+	Sync     string `json:"sync,omitempty"`
+	Health   string `json:"health,omitempty"`
+}
+
+// IntegrationAdapterRoute mirrors the core's http_json endpoint
+// addressing: path (relative) per capability. Populated instead of
+// Queues when Transport is "http_json".
+type IntegrationAdapterRoute struct {
 	Describe string `json:"describe,omitempty"`
 	Discover string `json:"discover,omitempty"`
 	Read     string `json:"read,omitempty"`
