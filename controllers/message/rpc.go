@@ -1,84 +1,65 @@
 package message
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"strings"
 
-	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/dakasa-yggdrasil/yggdrasil-sdk-go/adapter"
 	"go.uber.org/zap"
 )
 
+// Handler aliases adapter.Handler so the rest of this package can
+// declare handler returns without importing the SDK everywhere.
+type Handler = adapter.Handler
+
+// rpcError is the shape of the error field inside rpcResponse.
 type rpcError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
+// rpcResponse preserves the wire shape the kubernetes adapter has
+// always published: `{ ok, data? , error? }`. The SDK handles
+// transport-level framing (HTTP body, AMQP publishing) around this
+// JSON.
 type rpcResponse struct {
 	OK    bool      `json:"ok"`
 	Data  any       `json:"data,omitempty"`
 	Error *rpcError `json:"error,omitempty"`
 }
 
-func replySuccess(ctx context.Context, conn *amqp.Connection, d amqp.Delivery, data any, logger *zap.Logger) error {
-	return replyJSON(ctx, conn, d, rpcResponse{
-		OK:   true,
-		Data: data,
-	}, logger)
+// success is a handler-return helper: marshal a success rpcResponse
+// and hand it back as body/content-type/err=nil. The SDK will Ack and
+// Reply on the Delivery automatically.
+func success(data any) ([]byte, string, error) {
+	body, err := json.Marshal(rpcResponse{OK: true, Data: data})
+	if err != nil {
+		return nil, "", err
+	}
+	return body, "application/json", nil
 }
 
-func replyFailure(ctx context.Context, conn *amqp.Connection, d amqp.Delivery, code string, err error, logger *zap.Logger) error {
+// failure is the error-path equivalent of success. We do NOT return a
+// non-nil error because the adapter's protocol-level failure is
+// expressed as ok=false inside the reply body, not as a transport
+// error. Returning err from the handler would cause the SDK to Nack
+// the delivery and log a generic "handler failed" — we want the
+// caller to see the structured `code` + `message` instead.
+func failure(code string, cause error, logger *zap.Logger) ([]byte, string, error) {
 	if logger != nil {
-		logger.Error("rabbitmq rpc handler failed",
-			zap.String("queue", d.RoutingKey),
-			zap.String("reply_to", d.ReplyTo),
-			zap.String("correlation_id", d.CorrelationId),
+		logger.Error("adapter rpc handler failed",
 			zap.String("error_code", code),
-			zap.Error(err),
+			zap.Error(cause),
 		)
 	}
-
-	return replyJSON(ctx, conn, d, rpcResponse{
+	body, err := json.Marshal(rpcResponse{
 		OK: false,
 		Error: &rpcError{
 			Code:    code,
-			Message: err.Error(),
+			Message: cause.Error(),
 		},
-	}, logger)
-}
-
-func replyJSON(ctx context.Context, conn *amqp.Connection, d amqp.Delivery, response rpcResponse, logger *zap.Logger) error {
-	if strings.TrimSpace(d.ReplyTo) == "" {
-		return errors.New("reply_to is required for kubernetes integration rpc consumers")
-	}
-
-	body, err := json.Marshal(response)
+	})
 	if err != nil {
-		return err
+		return nil, "", err
 	}
-
-	ch, err := conn.Channel()
-	if err != nil {
-		return err
-	}
-	defer ch.Close()
-
-	if err := ch.PublishWithContext(ctx, "", d.ReplyTo, false, false, amqp.Publishing{
-		ContentType:   "application/json",
-		CorrelationId: d.CorrelationId,
-		Body:          body,
-	}); err != nil {
-		return err
-	}
-
-	if logger != nil {
-		logger.Debug("rabbitmq rpc reply sent",
-			zap.String("queue", d.RoutingKey),
-			zap.String("reply_to", d.ReplyTo),
-			zap.String("correlation_id", d.CorrelationId),
-		)
-	}
-
-	return nil
+	return body, "application/json", nil
 }
