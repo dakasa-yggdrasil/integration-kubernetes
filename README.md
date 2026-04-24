@@ -1,119 +1,91 @@
-# integration-kubernetes
+<div align="center">
 
-`integration-kubernetes` is the target-side ecosystem plugin that closes the installation loop for Yggdrasil products. It speaks RabbitMQ RPC, exposes the adapter handshake expected by `yggdrasil-core`, and applies or observes Kubernetes objects on a real cluster.
+# `integration-kubernetes`
 
-This repository keeps its own local protocol types on purpose. The public wire
-contract lives in [/Users/dakasa/projects/yggdrasil-core/docs/contracts](/Users/dakasa/projects/yggdrasil-core/docs/contracts), not in `yggdrasil-core/model`.
+**Yggdrasil adapter for Kubernetes** — deploy, apply, and observe K8s objects from declarative workflows
 
-## Current scope
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Container](https://img.shields.io/badge/ghcr.io-integration--kubernetes-2496ED.svg)](https://github.com/dakasa-yggdrasil/integration-kubernetes/pkgs/container/integration-kubernetes)
+[![Yggdrasil](https://img.shields.io/badge/part%20of-yggdrasil-brightgreen.svg)](https://github.com/dakasa-yggdrasil/yggdrasil-core)
 
-- `describe` queue for adapter introspection
-- `execute` queue with:
-  - `declarative_apply`
-  - `observe_objects`
-- real cluster execution through Kubernetes `dynamic` client
-- server-side apply as the current write mode
+</div>
 
-## Queues
+---
 
-- `yggdrasil.adapter.kubernetes.describe`
-- `yggdrasil.adapter.kubernetes.execute`
+## What it does
 
-## Environment
+Yggdrasil integration adapter for Kubernetes. Registers under the `kubernetes`
+family and exposes:
 
-- `BROKER_URL`: RabbitMQ connection string used by the worker itself
+| Operation | Purpose |
+|---|---|
+| `declarative_apply` | Apply a desired object set via server-side apply (client-go dynamic client). |
+| `apply_manifest` | Single-object variant used by `yggdrasil install` quickstarts. |
+| `observe_objects` | Read live state of a desired object set. |
 
-## Running
+Workflows calling `use: { kind: integration, family: kubernetes, operation: <op> }`
+resolve through this adapter at runtime.
 
-```bash
-go run .
+## Install
+
+```sh
+yggdrasil install dakasa-yggdrasil/integration-kubernetes --provider kubernetes
 ```
 
-## GitHub dogfooding
+The CLI walks the [`yggdrasil-quickstart.yaml`](yggdrasil-quickstart.yaml)
+inputs (kubeconfig, namespace, image), then dispatches a workflow that
+deploys the adapter + registers an `integration_instance` back in the core.
 
-This repository now ships:
+## Example workflow step
 
-- `.github/workflows/emit-deploy-event.yml`
-- `.github/workflows/deploy.yml`
-
-`emit-deploy-event.yml` uses the official GitHub Action
-[`dakasa-yggdrasil/action-emit-workflow-run`](https://github.com/dakasa-yggdrasil/action-emit-workflow-run)
-to send one workflow run request into `yggdrasil-core`. The core bootstrap
-workflow `global/ecosystem-repository-commit` then dispatches this repository's
-`deploy.yml`.
-
-## Instance configuration
-
-The integration instance can use:
-
-- `in_cluster`
-- `kubeconfig_path`
-- `kubeconfig`
-- `context`
-- `default_namespace`
-- `field_manager`
-
-At least one of `in_cluster`, `kubeconfig`, or `kubeconfig_path` must be provided.
-
-## Example integration_type
-
-```json
-{
-  "apiVersion": "yggdrasil.io/v1alpha1",
-  "kind": "integration_type",
-  "metadata": {
-    "name": "kubernetes",
-    "namespace": "global"
-  },
-  "spec": {
-    "provider": "kubernetes",
-    "adapter": {
-      "transport": "rabbitmq",
-      "version": "1.0.0",
-      "queues": {
-        "describe": "yggdrasil.adapter.kubernetes.describe",
-        "execute": "yggdrasil.adapter.kubernetes.execute"
-      },
-      "timeout_seconds": 30
-    },
-    "capabilities": ["describe", "execute"]
-  }
-}
+```yaml
+- id: apply-namespace
+  use:
+    kind: integration
+    family: kubernetes
+    operation: apply_manifest
+  with:
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ inputs.namespace }}"
 ```
 
-## Example integration_instance
+## Credentials (one of)
 
-```json
-{
-  "apiVersion": "yggdrasil.io/v1alpha1",
-  "kind": "integration_instance",
-  "metadata": {
-    "name": "kubernetes-platform-prod",
-    "namespace": "global"
-  },
-  "spec": {
-    "type_ref": {
-      "name": "kubernetes",
-      "namespace": "global"
-    },
-    "status": "active",
-    "config": {
-      "kubeconfig_path": "/etc/yggdrasil/kubeconfigs/platform-prod",
-      "context": "platform-prod",
-      "default_namespace": "default",
-      "field_manager": "yggdrasil"
-    },
-    "discovery": {
-      "enabled": false,
-      "mode": "manual"
-    }
-  }
-}
+- `kubeconfig` — inline YAML (stored as managed secret)
+- `kubeconfig_path` — filesystem path inside adapter pod
+- `in_cluster: true` — use the pod's own ServiceAccount
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Core[yggdrasil-core] -- AMQP RPC --> Adapter[integration-kubernetes pod]
+    Adapter -- client-go SSA --> Cluster[Your Kubernetes cluster]
 ```
 
-## Current semantics
+Stateless adapter. Every request carries the target instance credentials
+from the core; the adapter assembles a REST config, runs the operation,
+returns a structured result.
 
-- `declarative_apply` applies the desired object set with server-side apply
-- `observe_objects` reads the live objects that correspond to the desired set
-- namespaced resources inherit `target.namespace` or `default_namespace` when omitted in the object itself
-- cluster-scoped resources keep their original scope
+## Development
+
+```sh
+go test ./...
+go build -o bin/integration-kubernetes .
+docker build -t integration-kubernetes:dev .
+```
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE).
+
+---
+
+<div align="center">
+
+Part of [Yggdrasil](https://github.com/dakasa-yggdrasil/yggdrasil-core) · [Catalog](https://github.com/dakasa-yggdrasil/yggdrasil-core/blob/main/docs/catalog.md)
+
+</div>
