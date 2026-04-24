@@ -842,6 +842,15 @@ func stateFromObject(obj *unstructured.Unstructured, observed bool, status strin
 		"uid":              string(obj.GetUID()),
 	}
 
+	// Surface the raw .status block so callers can diagnose why an
+	// object is "not_ready" (Pod conditions + container statuses
+	// include ImagePullBackOff, CrashLoopBackOff messages). This is
+	// the only way to observe pod-level failures when the pod name
+	// is only known via its Deployment's ReplicaSet.
+	if rawStatus, ok := obj.Object["status"].(map[string]any); ok {
+		metadata["status"] = rawStatus
+	}
+
 	return model.InstallationResourceState{
 		Kind:      obj.GetKind(),
 		Namespace: obj.GetNamespace(),
