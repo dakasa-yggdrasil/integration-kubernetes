@@ -228,12 +228,13 @@ type AdapterTargetIntegrationContext struct {
 }
 
 type AdapterDeclarativeApplyRequest struct {
-	Operation string                             `json:"operation"`
-	Context   AdapterGenerateInstallationContext `json:"context"`
-	Target    AdapterTargetIntegrationContext    `json:"target"`
-	Objects   []map[string]any                   `json:"objects"`
-	Namespace string                             `json:"namespace,omitempty"`
-	Reconcile ProductReconcileSpec               `json:"reconcile,omitempty"`
+	Operation      string                             `json:"operation"`
+	Context        AdapterGenerateInstallationContext `json:"context"`
+	Target         AdapterTargetIntegrationContext    `json:"target"`
+	Objects        []map[string]any                   `json:"objects"`
+	Namespace      string                             `json:"namespace,omitempty"`
+	Reconcile      ProductReconcileSpec               `json:"reconcile,omitempty"`
+	ImageOverrides map[string]string                  `json:"image_overrides,omitempty"`
 }
 
 type AdapterDeclarativeApplyResponse struct {

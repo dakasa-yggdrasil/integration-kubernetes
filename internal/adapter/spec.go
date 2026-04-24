@@ -218,10 +218,32 @@ func decodeGenericDeclarativeApplyRequest(req model.AdapterExecuteIntegrationReq
 			Instance:     req.Integration.Instance,
 			InstanceSpec: req.Integration.InstanceSpec,
 		},
-		Objects:   objects,
-		Namespace: stringValue(req.Input["namespace"]),
-		Reconcile: decodeGenericReconcile(req.Input["reconcile"]),
+		Objects:        objects,
+		Namespace:      stringValue(req.Input["namespace"]),
+		Reconcile:      decodeGenericReconcile(req.Input["reconcile"]),
+		ImageOverrides: decodeImageOverrides(req.Input["image_overrides"]),
 	}, nil
+}
+
+// decodeImageOverrides turns the inbound map[string]any (from RPC JSON
+// input) into the map[string]string shape the apply pipeline expects.
+// Silently drops any non-string values — the contract says keys and
+// values are both strings (old_ref → new_ref).
+func decodeImageOverrides(raw any) map[string]string {
+	m, ok := raw.(map[string]any)
+	if !ok || len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			out[k] = s
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // decodeGenericApplyManifestRequest shapes an apply_manifest request into
@@ -387,7 +409,12 @@ func DeclarativeApply(ctx context.Context, req model.AdapterDeclarativeApplyRequ
 		fieldManager = DefaultFieldManager
 	}
 
-	resources, err := executor.Apply(ctx, req.Objects, effectiveNamespace(req.Namespace, cfg.DefaultNamespace), fieldManager)
+	objects := req.Objects
+	if len(req.ImageOverrides) > 0 {
+		objects = applyImageOverrides(objects, req.ImageOverrides)
+	}
+
+	resources, err := executor.Apply(ctx, objects, effectiveNamespace(req.Namespace, cfg.DefaultNamespace), fieldManager)
 	if err != nil {
 		return model.AdapterDeclarativeApplyResponse{}, err
 	}
@@ -407,8 +434,136 @@ func DeclarativeApply(ctx context.Context, req model.AdapterDeclarativeApplyRequ
 			"reconcile_strategy": req.Reconcile.Strategy,
 			"reconcile_wait":     req.Reconcile.Wait,
 			"reconcile_prune":    req.Reconcile.Prune,
+			"image_overrides":    len(req.ImageOverrides),
 		},
 	}, nil
+}
+
+// applyImageOverrides rewrites container `image:` fields in-place based on
+// the overrides map. Match rules:
+//   - Full match: exact current image ref ("dakasa-identities:latest") → new.
+//   - Prefix match: the container image's repo component matches any
+//     override key up to ":". Typical CD use: the CD sends
+//     "153...amazonaws.com/dakasa/identities": "153...amazonaws.com/dakasa/identities:sha-abc",
+//     but the desired manifest reads "dakasa-identities:latest". Neither
+//     matches by key name, so we ALSO try matching by tag-stripped image.
+//
+// This walks spec.template.spec.containers and .initContainers of any
+// object with a `spec.template.spec` field (Deployment, StatefulSet,
+// DaemonSet, Job via their spec.template, etc.).
+func applyImageOverrides(objects []map[string]any, overrides map[string]string) []map[string]any {
+	if len(overrides) == 0 {
+		return objects
+	}
+	out := make([]map[string]any, len(objects))
+	for i, obj := range objects {
+		cloned := deepCloneMap(obj)
+		rewriteContainerImages(cloned, overrides)
+		out[i] = cloned
+	}
+	return out
+}
+
+func rewriteContainerImages(obj map[string]any, overrides map[string]string) {
+	podSpec := extractPodSpec(obj)
+	if podSpec == nil {
+		return
+	}
+	for _, key := range []string{"containers", "initContainers"} {
+		containers, ok := podSpec[key].([]any)
+		if !ok {
+			continue
+		}
+		for _, c := range containers {
+			cmap, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			oldImage, _ := cmap["image"].(string)
+			if oldImage == "" {
+				continue
+			}
+			if newImage := matchOverride(oldImage, overrides); newImage != "" {
+				cmap["image"] = newImage
+			}
+		}
+	}
+}
+
+// extractPodSpec finds the pod spec under common paths:
+//   - Deployment/StatefulSet/DaemonSet/Job/CronJob: spec.template.spec
+//   - Pod: spec
+//   - CronJob: spec.jobTemplate.spec.template.spec
+func extractPodSpec(obj map[string]any) map[string]any {
+	spec, _ := obj["spec"].(map[string]any)
+	if spec == nil {
+		return nil
+	}
+	if template, ok := spec["template"].(map[string]any); ok {
+		if ps, ok := template["spec"].(map[string]any); ok {
+			return ps
+		}
+	}
+	if jt, ok := spec["jobTemplate"].(map[string]any); ok {
+		if tj, ok := jt["spec"].(map[string]any); ok {
+			if tmpl, ok := tj["template"].(map[string]any); ok {
+				if ps, ok := tmpl["spec"].(map[string]any); ok {
+					return ps
+				}
+			}
+		}
+	}
+	if kind, _ := obj["kind"].(string); kind == "Pod" {
+		return spec
+	}
+	return nil
+}
+
+func matchOverride(image string, overrides map[string]string) string {
+	if v, ok := overrides[image]; ok {
+		return v
+	}
+	// Prefix match: override key is a repo ref (no tag); image has a tag
+	// to strip. Also try reverse — image may be full ref and key a prefix.
+	stripped := strings.SplitN(image, ":", 2)[0]
+	if v, ok := overrides[stripped]; ok {
+		return v
+	}
+	// If image is a short name like "foo:latest" and override is
+	// keyed by a base path or a different ref, fall back to a simple
+	// last-path-segment match (e.g. override key "foo" matches image
+	// "foo:latest" or "any/registry/foo:tag").
+	segments := strings.Split(stripped, "/")
+	if len(segments) > 0 {
+		last := segments[len(segments)-1]
+		if v, ok := overrides[last]; ok {
+			return v
+		}
+	}
+	return ""
+}
+
+func deepCloneMap(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = deepCloneValue(v)
+	}
+	return out
+}
+
+func deepCloneValue(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return deepCloneMap(val)
+	case []any:
+		cloned := make([]any, len(val))
+		for i, item := range val {
+			cloned[i] = deepCloneValue(item)
+		}
+		return cloned
+	default:
+		return val
+	}
 }
 
 // ObserveObjects observes one desired object set on a Kubernetes target.
