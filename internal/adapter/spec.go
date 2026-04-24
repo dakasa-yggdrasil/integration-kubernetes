@@ -120,6 +120,10 @@ func Describe() model.AdapterDescribeResponse {
 		InstanceSchema: model.IntegrationSchemaSpec{
 			Mode: "inline",
 			Properties: map[string]model.IntegrationSchemaProperty{
+				"base_url": {
+					Type:        "string",
+					Description: "HTTP adapter base URL used when the integration_type declares transport=http_json.",
+				},
 				"in_cluster": {
 					Type:        "boolean",
 					Description: "Use in-cluster Kubernetes authentication.",
