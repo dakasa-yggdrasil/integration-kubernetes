@@ -261,6 +261,19 @@ type AdapterObserveObjectsResponse struct {
 	Metadata  map[string]any              `json:"metadata,omitempty"`
 }
 
+// LabelSelector identifies a set of Kubernetes objects by kind + match
+// labels. Used by observe_objects to find pods created by a Deployment
+// (name derived from ReplicaSet hash) without knowing them ahead of
+// time. All three fields are required; empty match_labels would
+// select every object of the given kind in the namespace, which is
+// too broad for any legitimate caller.
+type LabelSelector struct {
+	APIVersion  string            `json:"api_version"`
+	Kind        string            `json:"kind"`
+	Namespace   string            `json:"namespace"`
+	MatchLabels map[string]string `json:"match_labels"`
+}
+
 type AdapterReconcileInstallationRequest struct {
 	Operation   string                                        `json:"operation"`
 	Context     AdapterGenerateInstallationContext            `json:"context"`
