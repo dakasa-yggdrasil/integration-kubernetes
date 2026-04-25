@@ -26,7 +26,7 @@ import (
 
 const (
 	Provider                  = "kubernetes"
-	AdapterVersion            = "1.0.0"
+	AdapterVersion            = "1.2.0"
 	OperationDeclarativeApply = "declarative_apply"
 	// OperationApplyManifest is the single-object variant of
 	// declarative_apply. Callers pass exactly one Kubernetes object under
@@ -38,6 +38,7 @@ const (
 	OperationApplyManifest              = "apply_manifest"
 	OperationObserveObjects             = "observe_objects"
 	OperationEnsureDockerRegistrySecret = "ensure_docker_registry_secret"
+	OperationUpdateContainerImage       = "update_container_image"
 	ModeServerSideApply                 = "server_side_apply"
 	DefaultFieldManager                 = "yggdrasil"
 
@@ -50,6 +51,7 @@ var SupportedExecuteOperations = []string{
 	OperationApplyManifest,
 	OperationObserveObjects,
 	OperationEnsureDockerRegistrySecret,
+	OperationUpdateContainerImage,
 }
 
 type clusterConfig struct {
@@ -66,6 +68,7 @@ type kubernetesExecutor interface {
 	Observe(ctx context.Context, objects []map[string]any, namespace string) ([]model.InstallationResourceState, error)
 	List(ctx context.Context, selectors []model.LabelSelector, defaultNamespace string) ([]model.InstallationResourceState, error)
 	UpsertDockerRegistrySecret(ctx context.Context, req model.AdapterEnsureDockerRegistrySecretRequest) (model.InstallationResourceState, error)
+	UpdateContainerImage(ctx context.Context, req model.AdapterUpdateContainerImageRequest) (model.InstallationResourceState, error)
 }
 
 type dynamicExecutor struct {
@@ -319,6 +322,35 @@ func decodeEnsureDockerRegistrySecretRequest(req model.AdapterExecuteIntegration
 	}, nil
 }
 
+func decodeUpdateContainerImageRequest(req model.AdapterExecuteIntegrationRequest) (model.AdapterUpdateContainerImageRequest, error) {
+	if req.Integration.Instance.Name == "" || req.Integration.Type.Name == "" {
+		return model.AdapterUpdateContainerImageRequest{}, fmt.Errorf("update_container_image requires integration context")
+	}
+	ns := strings.TrimSpace(stringValue(req.Input["namespace"]))
+	deployment := strings.TrimSpace(stringValue(req.Input["deployment_name"]))
+	container := strings.TrimSpace(stringValue(req.Input["container_name"]))
+	image := strings.TrimSpace(stringValue(req.Input["image"]))
+	pullPolicy := strings.TrimSpace(stringValue(req.Input["image_pull_policy"]))
+	if ns == "" || deployment == "" || container == "" || image == "" {
+		return model.AdapterUpdateContainerImageRequest{}, fmt.Errorf("update_container_image requires namespace, deployment_name, container_name, image")
+	}
+	return model.AdapterUpdateContainerImageRequest{
+		Operation:       OperationUpdateContainerImage,
+		Context:         decodeGenericInstallationContext(req.Input["context"]),
+		Target: model.AdapterTargetIntegrationContext{
+			Type:         req.Integration.Type,
+			TypeSpec:     req.Integration.TypeSpec,
+			Instance:     req.Integration.Instance,
+			InstanceSpec: req.Integration.InstanceSpec,
+		},
+		Namespace:       ns,
+		DeploymentName:  deployment,
+		ContainerName:   container,
+		Image:           image,
+		ImagePullPolicy: pullPolicy,
+	}, nil
+}
+
 func decodeGenericObserveObjectsRequest(req model.AdapterExecuteIntegrationRequest) (model.AdapterObserveObjectsRequest, error) {
 	if req.Integration.Instance.Name == "" || req.Integration.Type.Name == "" {
 		return model.AdapterObserveObjectsRequest{}, fmt.Errorf("generic observe_objects requires integration context")
@@ -461,6 +493,22 @@ func Execute(ctx context.Context, req model.AdapterExecuteIntegrationRequest) (m
 			return model.AdapterExecuteIntegrationResponse{}, err
 		}
 		response, err := EnsureDockerRegistrySecret(ctx, typedReq)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		return model.AdapterExecuteIntegrationResponse{
+			Operation:  operation,
+			Capability: firstNonEmptyString(strings.TrimSpace(req.Capability), operation),
+			Status:     response.Status,
+			Output:     response,
+			Metadata:   response.Metadata,
+		}, nil
+	case OperationUpdateContainerImage:
+		typedReq, err := decodeUpdateContainerImageRequest(req)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		response, err := UpdateContainerImage(ctx, typedReq)
 		if err != nil {
 			return model.AdapterExecuteIntegrationResponse{}, err
 		}
@@ -751,6 +799,40 @@ func EnsureDockerRegistrySecret(ctx context.Context, req model.AdapterEnsureDock
 	}, nil
 }
 
+// UpdateContainerImage patches a single container's image (and optionally
+// imagePullPolicy) in an existing Deployment via strategic-merge patch by
+// container name. The pre-check that the container name exists before patching
+// eliminates the sparse-SSA "silent duplicate container" footgun.
+func UpdateContainerImage(ctx context.Context, req model.AdapterUpdateContainerImageRequest) (model.AdapterUpdateContainerImageResponse, error) {
+	cfg, err := resolveClusterConfig(req.Target.InstanceSpec)
+	if err != nil {
+		return model.AdapterUpdateContainerImageResponse{}, err
+	}
+
+	executor, err := newKubernetesExecutor(cfg)
+	if err != nil {
+		return model.AdapterUpdateContainerImageResponse{}, err
+	}
+
+	state, err := executor.UpdateContainerImage(ctx, req)
+	if err != nil {
+		return model.AdapterUpdateContainerImageResponse{}, err
+	}
+
+	return model.AdapterUpdateContainerImageResponse{
+		Operation: OperationUpdateContainerImage,
+		Status:    state.Status,
+		Resource:  state,
+		Metadata: map[string]any{
+			"provider":        Provider,
+			"namespace":       req.Namespace,
+			"deployment_name": req.DeploymentName,
+			"container_name":  req.ContainerName,
+			"image":           req.Image,
+		},
+	}, nil
+}
+
 func describeActionCatalog() []model.IntegrationActionDefinition {
 	return []model.IntegrationActionDefinition{
 		{
@@ -774,6 +856,12 @@ func describeActionCatalog() []model.IntegrationActionDefinition {
 		{
 			Name:          OperationEnsureDockerRegistrySecret,
 			Description:   "Create or update a Kubernetes Secret of type kubernetes.io/dockerconfigjson for image pull authentication.",
+			ResourceTypes: []string{"object"},
+			Idempotent:    true,
+		},
+		{
+			Name:          OperationUpdateContainerImage,
+			Description:   "Update the image (and optionally imagePullPolicy) of a named container in an existing Deployment via strategic-merge patch by container name. Replaces fragile sparse-SSA upgrades.",
 			ResourceTypes: []string{"object"},
 			Idempotent:    true,
 		},
@@ -957,6 +1045,78 @@ func (e *dynamicExecutor) UpsertDockerRegistrySecret(ctx context.Context, req mo
 		return model.InstallationResourceState{}, fmt.Errorf("apply returned no states")
 	}
 	return states[0], nil
+}
+
+func (e *dynamicExecutor) UpdateContainerImage(ctx context.Context, req model.AdapterUpdateContainerImageRequest) (model.InstallationResourceState, error) {
+	// 1. Build the strategic-merge patch body — only the fields we want to update.
+	container := map[string]any{
+		"name":  req.ContainerName,
+		"image": req.Image,
+	}
+	if req.ImagePullPolicy != "" {
+		container["imagePullPolicy"] = req.ImagePullPolicy
+	}
+	patchBody := map[string]any{
+		"spec": map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{container},
+				},
+			},
+		},
+	}
+	patchBytes, err := json.Marshal(patchBody)
+	if err != nil {
+		return model.InstallationResourceState{}, fmt.Errorf("marshal patch: %w", err)
+	}
+
+	// 2. Resolve the Deployment GVR and patch via dynamic client.
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata":   map[string]any{"name": req.DeploymentName, "namespace": req.Namespace},
+	}}
+	mapping, err := e.mapper.RESTMapping(obj.GroupVersionKind().GroupKind(), obj.GroupVersionKind().Version)
+	if err != nil {
+		return model.InstallationResourceState{}, fmt.Errorf("resolve Deployment GVR: %w", err)
+	}
+	resourceClient := e.resourceInterface(mapping, req.Namespace)
+
+	// 3. Pre-check: read the existing Deployment to verify the container name
+	//    exists. This is what eliminates the SSA footgun — we explicitly fail
+	//    if the container name is wrong, instead of silently appending a new
+	//    container to the pod.
+	existing, err := resourceClient.Get(ctx, req.DeploymentName, metav1.GetOptions{})
+	if err != nil {
+		return model.InstallationResourceState{}, fmt.Errorf("get Deployment %s/%s: %w", req.Namespace, req.DeploymentName, err)
+	}
+	found := false
+	if spec, ok := existing.Object["spec"].(map[string]any); ok {
+		if tmpl, ok := spec["template"].(map[string]any); ok {
+			if podSpec, ok := tmpl["spec"].(map[string]any); ok {
+				if containers, ok := podSpec["containers"].([]any); ok {
+					for _, raw := range containers {
+						if c, ok := raw.(map[string]any); ok && c["name"] == req.ContainerName {
+							found = true
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+	if !found {
+		return model.InstallationResourceState{}, fmt.Errorf("container %q not found in Deployment %s/%s — cannot update (strategic-merge patch by container name requires existing container)", req.ContainerName, req.Namespace, req.DeploymentName)
+	}
+
+	// 4. Apply the strategic-merge patch.
+	patched, err := resourceClient.Patch(ctx, req.DeploymentName, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{
+		FieldManager: DefaultFieldManager,
+	})
+	if err != nil {
+		return model.InstallationResourceState{}, fmt.Errorf("patch Deployment %s/%s: %w", req.Namespace, req.DeploymentName, err)
+	}
+	return stateFromObject(patched, true, "updated"), nil
 }
 
 func (e *dynamicExecutor) applyOne(ctx context.Context, raw map[string]any, namespace, fieldManager string) (model.InstallationResourceState, error) {
@@ -1334,6 +1494,40 @@ func (f *fakeExecutor) UpsertDockerRegistrySecret(_ context.Context, req model.A
 	}}
 	f.objects[fakeObjectKey(obj)] = obj
 	return stateFromObject(obj, true, "ready"), nil
+}
+
+func (f *fakeExecutor) UpdateContainerImage(_ context.Context, req model.AdapterUpdateContainerImageRequest) (model.InstallationResourceState, error) {
+	fakeObj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata":   map[string]any{"name": req.DeploymentName, "namespace": req.Namespace},
+	}}
+	key := fakeObjectKey(fakeObj)
+	existing, ok := f.objects[key]
+	if !ok {
+		return model.InstallationResourceState{}, fmt.Errorf("Deployment %s/%s not found", req.Namespace, req.DeploymentName)
+	}
+	spec, _ := existing.Object["spec"].(map[string]any)
+	template, _ := spec["template"].(map[string]any)
+	podSpec, _ := template["spec"].(map[string]any)
+	containers, _ := podSpec["containers"].([]any)
+	found := false
+	for i, raw := range containers {
+		c, _ := raw.(map[string]any)
+		if c["name"] == req.ContainerName {
+			c["image"] = req.Image
+			if req.ImagePullPolicy != "" {
+				c["imagePullPolicy"] = req.ImagePullPolicy
+			}
+			containers[i] = c
+			found = true
+			break
+		}
+	}
+	if !found {
+		return model.InstallationResourceState{}, fmt.Errorf("container %q not found in Deployment %s/%s", req.ContainerName, req.Namespace, req.DeploymentName)
+	}
+	return stateFromObject(existing, true, "updated"), nil
 }
 
 func labelsMatch(have map[string]string, want map[string]string) bool {

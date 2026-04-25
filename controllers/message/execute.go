@@ -69,6 +69,16 @@ func ExecuteHandler(logger *zap.Logger) Handler {
 				return failure("execute_failed", err, logger)
 			}
 			return success(response)
+		case adapter.OperationUpdateContainerImage:
+			var req model.AdapterUpdateContainerImageRequest
+			if err := json.Unmarshal(d.Body, &req); err != nil {
+				return failure("bad_request", err, logger)
+			}
+			response, err := adapter.UpdateContainerImage(ctx, req)
+			if err != nil {
+				return failure("execute_failed", err, logger)
+			}
+			return success(response)
 		}
 
 		return failure("unsupported_operation", fmt.Errorf("unsupported operation %q", request.Operation), logger)

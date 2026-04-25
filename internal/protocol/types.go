@@ -323,6 +323,29 @@ type AdapterEnsureDockerRegistrySecretResponse struct {
 	Metadata  map[string]any            `json:"metadata,omitempty"`
 }
 
+// AdapterUpdateContainerImageRequest patches a container's image (and optionally
+// imagePullPolicy) in an existing Deployment via strategic-merge patch by
+// container name — avoiding the sparse-SSA duplicate-container footgun
+// (when the desired container name doesn't match the existing container name,
+// SSA appends a NEW container instead of updating the existing one).
+type AdapterUpdateContainerImageRequest struct {
+	Operation       string                          `json:"operation"`
+	Context         AdapterGenerateInstallationContext `json:"context,omitempty"`
+	Target          AdapterTargetIntegrationContext    `json:"target,omitempty"`
+	Namespace       string                          `json:"namespace"`
+	DeploymentName  string                          `json:"deployment_name"`
+	ContainerName   string                          `json:"container_name"`
+	Image           string                          `json:"image"`
+	ImagePullPolicy string                          `json:"image_pull_policy,omitempty"`
+}
+
+type AdapterUpdateContainerImageResponse struct {
+	Operation string                    `json:"operation,omitempty"`
+	Status    string                    `json:"status,omitempty"`
+	Resource  InstallationResourceState `json:"resource"`
+	Metadata  map[string]any            `json:"metadata,omitempty"`
+}
+
 type AdapterDiscoverInstallationStateRequest struct {
 	Operation   string                                        `json:"operation"`
 	Context     AdapterGenerateInstallationContext            `json:"context"`
