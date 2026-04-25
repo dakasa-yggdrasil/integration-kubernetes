@@ -334,3 +334,36 @@ func TestExecuteApplyManifestRejectsNonObjectManifest(t *testing.T) {
 		t.Fatal("expected non-object with.manifest to fail")
 	}
 }
+
+func TestStateFromObjectIncludesSpec(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]any{
+			"name":      "foo",
+			"namespace": "ns",
+		},
+		"spec": map[string]any{
+			"replicas": int64(3),
+			"selector": map[string]any{
+				"matchLabels": map[string]any{"app": "foo"},
+			},
+		},
+		"status": map[string]any{
+			"readyReplicas": int64(3),
+		},
+	}}
+
+	state := stateFromObject(obj, true, "ready")
+	specMap, _ := state.Metadata["spec"].(map[string]any)
+	if specMap == nil {
+		t.Fatal("stateFromObject must surface .spec in metadata")
+	}
+	if specMap["replicas"] != int64(3) {
+		t.Errorf("spec.replicas = %v, want 3", specMap["replicas"])
+	}
+	// existing .status surfacing still works
+	if _, ok := state.Metadata["status"].(map[string]any); !ok {
+		t.Error("stateFromObject must still surface .status")
+	}
+}

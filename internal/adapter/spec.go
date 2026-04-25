@@ -104,8 +104,8 @@ func Describe() model.AdapterDescribeResponse {
 		}
 	}
 	return model.AdapterDescribeResponse{
-		Provider: Provider,
-		Adapter:  adapterSpec,
+		Provider:     Provider,
+		Adapter:      adapterSpec,
 		Capabilities: []string{"describe", "execute"},
 		CredentialSchema: model.IntegrationSchemaSpec{
 			Mode: "inline",
@@ -849,6 +849,15 @@ func stateFromObject(obj *unstructured.Unstructured, observed bool, status strin
 	// is only known via its Deployment's ReplicaSet.
 	if rawStatus, ok := obj.Object["status"].(map[string]any); ok {
 		metadata["status"] = rawStatus
+	}
+
+	// Also surface the raw .spec block. Declarative operators often
+	// need to compare desired vs. observed at the spec level (e.g.
+	// the image tag of a Deployment's container template) without
+	// issuing a second API round-trip. Nil-safe: only set the key
+	// when .spec is present.
+	if rawSpec, ok := obj.Object["spec"].(map[string]any); ok {
+		metadata["spec"] = rawSpec
 	}
 
 	return model.InstallationResourceState{
