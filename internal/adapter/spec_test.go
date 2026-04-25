@@ -367,6 +367,28 @@ func TestObserveObjectsByLabelSelector(t *testing.T) {
 	}
 }
 
+func TestEnsureDockerRegistrySecretCreatesSecret(t *testing.T) {
+	fake := &fakeExecutor{objects: map[string]*unstructured.Unstructured{}}
+	req := model.AdapterEnsureDockerRegistrySecretRequest{
+		Operation:  OperationEnsureDockerRegistrySecret,
+		Namespace:  "ns",
+		SecretName: "ghcr-pull",
+		Registry:   "ghcr.io",
+		Username:   "alice",
+		Password:   "secret",
+	}
+	state, err := fake.UpsertDockerRegistrySecret(context.Background(), req)
+	if err != nil {
+		t.Fatalf("UpsertDockerRegistrySecret error: %v", err)
+	}
+	if state.Name != "ghcr-pull" || state.Namespace != "ns" {
+		t.Errorf("state name/ns = %s/%s, want ghcr-pull/ns", state.Name, state.Namespace)
+	}
+	if _, ok := fake.objects["ns/ghcr-pull"]; !ok {
+		t.Error("fake executor did not record the Secret object")
+	}
+}
+
 func asAnyMap(in map[string]string) map[string]any {
 	out := make(map[string]any, len(in))
 	for k, v := range in {

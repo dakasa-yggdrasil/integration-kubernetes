@@ -64,3 +64,21 @@ func ExecuteHandler(logger *zap.Logger) Handler {
 		return failure("unsupported_operation", fmt.Errorf("unsupported operation %q", request.Operation), logger)
 	}
 }
+
+// EnsureDockerRegistrySecretHandler returns a standalone handler for
+// direct ensure_docker_registry_secret requests (non-generic shape).
+// In practice all calls arrive via the generic Execute path; this is
+// provided for completeness and direct AMQP consumers.
+func EnsureDockerRegistrySecretHandler(logger *zap.Logger) Handler {
+	return func(ctx context.Context, d rpc.Delivery) ([]byte, string, error) {
+		var request model.AdapterEnsureDockerRegistrySecretRequest
+		if err := json.Unmarshal(d.Body, &request); err != nil {
+			return failure("bad_request", err, logger)
+		}
+		response, err := adapter.EnsureDockerRegistrySecret(ctx, request)
+		if err != nil {
+			return failure("execute_failed", err, logger)
+		}
+		return success(response)
+	}
+}

@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -34,10 +35,11 @@ const (
 	// (apply-service-account, apply-adapter-deployment, apply-credentials-secret)
 	// compile to this operation — one manifest per step gives adopters
 	// explicit, auditable YAML rather than opaque object arrays.
-	OperationApplyManifest  = "apply_manifest"
-	OperationObserveObjects = "observe_objects"
-	ModeServerSideApply     = "server_side_apply"
-	DefaultFieldManager     = "yggdrasil"
+	OperationApplyManifest              = "apply_manifest"
+	OperationObserveObjects             = "observe_objects"
+	OperationEnsureDockerRegistrySecret = "ensure_docker_registry_secret"
+	ModeServerSideApply                 = "server_side_apply"
+	DefaultFieldManager                 = "yggdrasil"
 
 	QueueDescribe = "yggdrasil.adapter.kubernetes.describe"
 	QueueExecute  = "yggdrasil.adapter.kubernetes.execute"
@@ -47,6 +49,7 @@ var SupportedExecuteOperations = []string{
 	OperationDeclarativeApply,
 	OperationApplyManifest,
 	OperationObserveObjects,
+	OperationEnsureDockerRegistrySecret,
 }
 
 type clusterConfig struct {
@@ -62,6 +65,7 @@ type kubernetesExecutor interface {
 	Apply(ctx context.Context, objects []map[string]any, namespace string, fieldManager string) ([]model.InstallationResourceState, error)
 	Observe(ctx context.Context, objects []map[string]any, namespace string) ([]model.InstallationResourceState, error)
 	List(ctx context.Context, selectors []model.LabelSelector, defaultNamespace string) ([]model.InstallationResourceState, error)
+	UpsertDockerRegistrySecret(ctx context.Context, req model.AdapterEnsureDockerRegistrySecretRequest) (model.InstallationResourceState, error)
 }
 
 type dynamicExecutor struct {
@@ -286,6 +290,35 @@ func decodeGenericApplyManifestRequest(req model.AdapterExecuteIntegrationReques
 	}, nil
 }
 
+func decodeEnsureDockerRegistrySecretRequest(req model.AdapterExecuteIntegrationRequest) (model.AdapterEnsureDockerRegistrySecretRequest, error) {
+	if req.Integration.Instance.Name == "" || req.Integration.Type.Name == "" {
+		return model.AdapterEnsureDockerRegistrySecretRequest{}, fmt.Errorf("ensure_docker_registry_secret requires integration context")
+	}
+	namespace := stringValue(req.Input["namespace"])
+	secretName := stringValue(req.Input["secret_name"])
+	registry := stringValue(req.Input["registry"])
+	username := stringValue(req.Input["username"])
+	password := stringValue(req.Input["password"])
+	if namespace == "" || secretName == "" || registry == "" || username == "" || password == "" {
+		return model.AdapterEnsureDockerRegistrySecretRequest{}, fmt.Errorf("ensure_docker_registry_secret requires namespace, secret_name, registry, username, password")
+	}
+	return model.AdapterEnsureDockerRegistrySecretRequest{
+		Operation: OperationEnsureDockerRegistrySecret,
+		Context:   decodeGenericInstallationContext(req.Input["context"]),
+		Target: model.AdapterTargetIntegrationContext{
+			Type:         req.Integration.Type,
+			TypeSpec:     req.Integration.TypeSpec,
+			Instance:     req.Integration.Instance,
+			InstanceSpec: req.Integration.InstanceSpec,
+		},
+		Namespace:  namespace,
+		SecretName: secretName,
+		Registry:   registry,
+		Username:   username,
+		Password:   password,
+	}, nil
+}
+
 func decodeGenericObserveObjectsRequest(req model.AdapterExecuteIntegrationRequest) (model.AdapterObserveObjectsRequest, error) {
 	if req.Integration.Instance.Name == "" || req.Integration.Type.Name == "" {
 		return model.AdapterObserveObjectsRequest{}, fmt.Errorf("generic observe_objects requires integration context")
@@ -409,6 +442,22 @@ func Execute(ctx context.Context, req model.AdapterExecuteIntegrationRequest) (m
 			return model.AdapterExecuteIntegrationResponse{}, err
 		}
 		response, err := ObserveObjects(ctx, typedReq)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		return model.AdapterExecuteIntegrationResponse{
+			Operation:  operation,
+			Capability: firstNonEmptyString(strings.TrimSpace(req.Capability), operation),
+			Status:     response.Status,
+			Output:     response,
+			Metadata:   response.Metadata,
+		}, nil
+	case OperationEnsureDockerRegistrySecret:
+		typedReq, err := decodeEnsureDockerRegistrySecretRequest(req)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		response, err := EnsureDockerRegistrySecret(ctx, typedReq)
 		if err != nil {
 			return model.AdapterExecuteIntegrationResponse{}, err
 		}
@@ -652,6 +701,39 @@ func ObserveObjects(ctx context.Context, req model.AdapterObserveObjectsRequest)
 	}, nil
 }
 
+// EnsureDockerRegistrySecret idempotently creates or updates a Kubernetes
+// Secret of type kubernetes.io/dockerconfigjson for image pull authentication.
+func EnsureDockerRegistrySecret(ctx context.Context, req model.AdapterEnsureDockerRegistrySecretRequest) (model.AdapterEnsureDockerRegistrySecretResponse, error) {
+	cfg, err := resolveClusterConfig(req.Target.InstanceSpec)
+	if err != nil {
+		return model.AdapterEnsureDockerRegistrySecretResponse{}, err
+	}
+
+	executor, err := newKubernetesExecutor(cfg)
+	if err != nil {
+		return model.AdapterEnsureDockerRegistrySecretResponse{}, err
+	}
+
+	state, err := executor.UpsertDockerRegistrySecret(ctx, req)
+	if err != nil {
+		return model.AdapterEnsureDockerRegistrySecretResponse{}, err
+	}
+
+	return model.AdapterEnsureDockerRegistrySecretResponse{
+		Operation: OperationEnsureDockerRegistrySecret,
+		Status:    state.Status,
+		Resource:  state,
+		Metadata: map[string]any{
+			"provider":           Provider,
+			"secret_name":        req.SecretName,
+			"namespace":          req.Namespace,
+			"registry":           req.Registry,
+			"target_instance":    req.Target.Instance.Name,
+			"target_integration": req.Target.Type.Name,
+		},
+	}, nil
+}
+
 func describeActionCatalog() []model.IntegrationActionDefinition {
 	return []model.IntegrationActionDefinition{
 		{
@@ -669,6 +751,12 @@ func describeActionCatalog() []model.IntegrationActionDefinition {
 		{
 			Name:          OperationObserveObjects,
 			Description:   "Observe the current state of a desired object set in a Kubernetes cluster.",
+			ResourceTypes: []string{"object"},
+			Idempotent:    true,
+		},
+		{
+			Name:          OperationEnsureDockerRegistrySecret,
+			Description:   "Create or update a Kubernetes Secret of type kubernetes.io/dockerconfigjson for image pull authentication.",
 			ResourceTypes: []string{"object"},
 			Idempotent:    true,
 		},
@@ -822,6 +910,36 @@ func (e *dynamicExecutor) List(ctx context.Context, selectors []model.LabelSelec
 		}
 	}
 	return resources, nil
+}
+
+func (e *dynamicExecutor) UpsertDockerRegistrySecret(ctx context.Context, req model.AdapterEnsureDockerRegistrySecretRequest) (model.InstallationResourceState, error) {
+	payload, err := BuildDockerConfigJSON(req.Registry, req.Username, req.Password)
+	if err != nil {
+		return model.InstallationResourceState{}, fmt.Errorf("build dockerconfigjson: %w", err)
+	}
+	obj := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"type":       "kubernetes.io/dockerconfigjson",
+		"metadata": map[string]any{
+			"name":      req.SecretName,
+			"namespace": req.Namespace,
+		},
+		"data": map[string]any{
+			".dockerconfigjson": base64.StdEncoding.EncodeToString(payload),
+		},
+	}
+	// Delegate to the same apply pipeline as declarative_apply. The
+	// fieldManager here is fixed — users cannot override it for this
+	// op, because the Secret contents are fully opaque to them.
+	states, err := e.Apply(ctx, []map[string]any{obj}, req.Namespace, DefaultFieldManager)
+	if err != nil {
+		return model.InstallationResourceState{}, err
+	}
+	if len(states) == 0 {
+		return model.InstallationResourceState{}, fmt.Errorf("apply returned no states")
+	}
+	return states[0], nil
 }
 
 func (e *dynamicExecutor) applyOne(ctx context.Context, raw map[string]any, namespace, fieldManager string) (model.InstallationResourceState, error) {
@@ -1185,6 +1303,20 @@ func (f *fakeExecutor) List(_ context.Context, selectors []model.LabelSelector, 
 		}
 	}
 	return resources, nil
+}
+
+func (f *fakeExecutor) UpsertDockerRegistrySecret(_ context.Context, req model.AdapterEnsureDockerRegistrySecretRequest) (model.InstallationResourceState, error) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":      req.SecretName,
+			"namespace": req.Namespace,
+		},
+		"type": "kubernetes.io/dockerconfigjson",
+	}}
+	f.objects[req.Namespace+"/"+req.SecretName] = obj
+	return stateFromObject(obj, true, "ready"), nil
 }
 
 func labelsMatch(have map[string]string, want map[string]string) bool {

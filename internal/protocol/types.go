@@ -301,6 +301,28 @@ type InstallationResourceState struct {
 	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
+// AdapterEnsureDockerRegistrySecretRequest is the request shape for
+// the ensure_docker_registry_secret operation. The adapter creates or
+// updates a Secret (type kubernetes.io/dockerconfigjson) containing
+// the base64-encoded credentials for a single registry.
+type AdapterEnsureDockerRegistrySecretRequest struct {
+	Operation  string                             `json:"operation"`
+	Context    AdapterGenerateInstallationContext `json:"context,omitempty"`
+	Target     AdapterTargetIntegrationContext    `json:"target,omitempty"`
+	Namespace  string                             `json:"namespace"`
+	SecretName string                             `json:"secret_name"`
+	Registry   string                             `json:"registry"`
+	Username   string                             `json:"username"`
+	Password   string                             `json:"password"`
+}
+
+type AdapterEnsureDockerRegistrySecretResponse struct {
+	Operation string                    `json:"operation,omitempty"`
+	Status    string                    `json:"status,omitempty"`
+	Resource  InstallationResourceState `json:"resource"`
+	Metadata  map[string]any            `json:"metadata,omitempty"`
+}
+
 type AdapterDiscoverInstallationStateRequest struct {
 	Operation   string                                        `json:"operation"`
 	Context     AdapterGenerateInstallationContext            `json:"context"`
