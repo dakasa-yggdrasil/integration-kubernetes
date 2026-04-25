@@ -335,6 +335,46 @@ func TestExecuteApplyManifestRejectsNonObjectManifest(t *testing.T) {
 	}
 }
 
+func TestObserveObjectsByLabelSelector(t *testing.T) {
+	mkPod := func(name string, labels map[string]string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Pod",
+			"metadata": map[string]any{
+				"name":      name,
+				"namespace": "ns",
+				"labels":    asAnyMap(labels),
+			},
+		}}
+	}
+	fake := &fakeExecutor{objects: map[string]*unstructured.Unstructured{
+		"a": mkPod("a", map[string]string{"app": "foo"}),
+		"b": mkPod("b", map[string]string{"app": "foo"}),
+		"c": mkPod("c", map[string]string{"app": "bar"}),
+	}}
+
+	selectors := []model.LabelSelector{{
+		APIVersion: "v1", Kind: "Pod", Namespace: "ns",
+		MatchLabels: map[string]string{"app": "foo"},
+	}}
+
+	results, err := fake.List(context.Background(), selectors, "default")
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if got := len(results); got != 2 {
+		t.Errorf("List result count = %d, want 2", got)
+	}
+}
+
+func asAnyMap(in map[string]string) map[string]any {
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 func TestStateFromObjectIncludesSpec(t *testing.T) {
 	obj := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apps/v1",

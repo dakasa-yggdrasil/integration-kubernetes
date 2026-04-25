@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
 	memcache "k8s.io/client-go/discovery/cached/memory"
@@ -60,6 +61,7 @@ type clusterConfig struct {
 type kubernetesExecutor interface {
 	Apply(ctx context.Context, objects []map[string]any, namespace string, fieldManager string) ([]model.InstallationResourceState, error)
 	Observe(ctx context.Context, objects []map[string]any, namespace string) ([]model.InstallationResourceState, error)
+	List(ctx context.Context, selectors []model.LabelSelector, defaultNamespace string) ([]model.InstallationResourceState, error)
 }
 
 type dynamicExecutor struct {
@@ -290,8 +292,9 @@ func decodeGenericObserveObjectsRequest(req model.AdapterExecuteIntegrationReque
 	}
 
 	objects := objectSlice(req.Input["objects"])
-	if len(objects) == 0 {
-		return model.AdapterObserveObjectsRequest{}, fmt.Errorf("generic observe_objects requires at least one object")
+	selectors := decodeLabelSelectors(req.Input["label_selectors"])
+	if len(objects) == 0 && len(selectors) == 0 {
+		return model.AdapterObserveObjectsRequest{}, fmt.Errorf("generic observe_objects requires at least one object or label_selector")
 	}
 
 	return model.AdapterObserveObjectsRequest{
@@ -303,9 +306,38 @@ func decodeGenericObserveObjectsRequest(req model.AdapterExecuteIntegrationReque
 			Instance:     req.Integration.Instance,
 			InstanceSpec: req.Integration.InstanceSpec,
 		},
-		Objects:   objects,
-		Namespace: stringValue(req.Input["namespace"]),
+		Objects:        objects,
+		Namespace:      stringValue(req.Input["namespace"]),
+		LabelSelectors: selectors,
 	}, nil
+}
+
+func decodeLabelSelectors(raw any) []model.LabelSelector {
+	slice, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]model.LabelSelector, 0, len(slice))
+	for _, item := range slice {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		matchLabelsRaw, _ := m["match_labels"].(map[string]any)
+		ml := make(map[string]string, len(matchLabelsRaw))
+		for k, v := range matchLabelsRaw {
+			if s, ok := v.(string); ok {
+				ml[k] = s
+			}
+		}
+		out = append(out, model.LabelSelector{
+			APIVersion:  stringValue(m["api_version"]),
+			Kind:        stringValue(m["kind"]),
+			Namespace:   stringValue(m["namespace"]),
+			MatchLabels: ml,
+		})
+	}
+	return out
 }
 
 func decodeGenericInstallationContext(value any) model.AdapterGenerateInstallationContext {
@@ -578,9 +610,18 @@ func ObserveObjects(ctx context.Context, req model.AdapterObserveObjectsRequest)
 		return model.AdapterObserveObjectsResponse{}, err
 	}
 
-	resources, err := executor.Observe(ctx, req.Objects, effectiveNamespace(req.Namespace, cfg.DefaultNamespace))
+	ns := effectiveNamespace(req.Namespace, cfg.DefaultNamespace)
+	resources, err := executor.Observe(ctx, req.Objects, ns)
 	if err != nil {
 		return model.AdapterObserveObjectsResponse{}, err
+	}
+
+	if len(req.LabelSelectors) > 0 {
+		listed, err := executor.List(ctx, req.LabelSelectors, ns)
+		if err != nil {
+			return model.AdapterObserveObjectsResponse{}, err
+		}
+		resources = append(resources, listed...)
 	}
 
 	observed := true
@@ -738,6 +779,47 @@ func (e *dynamicExecutor) Observe(ctx context.Context, objects []map[string]any,
 			return nil, err
 		}
 		resources = append(resources, resource)
+	}
+	return resources, nil
+}
+
+// List returns the set of objects matching each selector. Kinds that
+// the RESTMapper does not recognize surface as a single "not_found"
+// state so callers can distinguish "selector matched nothing" (empty
+// slice appended) from "selector refers to an unknown type" (one
+// not_found entry).
+func (e *dynamicExecutor) List(ctx context.Context, selectors []model.LabelSelector, defaultNamespace string) ([]model.InstallationResourceState, error) {
+	resources := make([]model.InstallationResourceState, 0)
+	for _, selector := range selectors {
+		ns := selector.Namespace
+		if strings.TrimSpace(ns) == "" {
+			ns = defaultNamespace
+		}
+		gv, err := schema.ParseGroupVersion(selector.APIVersion)
+		if err != nil {
+			return nil, fmt.Errorf("parse api_version %q: %w", selector.APIVersion, err)
+		}
+		gk := schema.GroupKind{Group: gv.Group, Kind: selector.Kind}
+		mapping, err := e.mapper.RESTMapping(gk, gv.Version)
+		if err != nil {
+			resources = append(resources, model.InstallationResourceState{
+				Kind:      selector.Kind,
+				Namespace: ns,
+				Status:    "not_found",
+				Observed:  false,
+			})
+			continue
+		}
+		resourceClient := e.resourceInterface(mapping, ns)
+		labelSelector := metav1.FormatLabelSelector(&metav1.LabelSelector{MatchLabels: selector.MatchLabels})
+		list, err := resourceClient.List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
+		if err != nil {
+			return nil, fmt.Errorf("list %s/%s: %w", selector.Kind, labelSelector, err)
+		}
+		for i := range list.Items {
+			item := &list.Items[i]
+			resources = append(resources, stateFromObject(item, true, deriveResourceStatus(item)))
+		}
 	}
 	return resources, nil
 }
@@ -1080,6 +1162,38 @@ func (f *fakeExecutor) Observe(_ context.Context, objects []map[string]any, name
 		resources = append(resources, stateFromObject(live.DeepCopy(), true, deriveResourceStatus(live)))
 	}
 	return resources, nil
+}
+
+func (f *fakeExecutor) List(_ context.Context, selectors []model.LabelSelector, defaultNamespace string) ([]model.InstallationResourceState, error) {
+	resources := make([]model.InstallationResourceState, 0)
+	for _, selector := range selectors {
+		ns := selector.Namespace
+		if strings.TrimSpace(ns) == "" {
+			ns = defaultNamespace
+		}
+		for _, obj := range f.objects {
+			if obj.GetKind() != selector.Kind {
+				continue
+			}
+			if obj.GetNamespace() != ns {
+				continue
+			}
+			if !labelsMatch(obj.GetLabels(), selector.MatchLabels) {
+				continue
+			}
+			resources = append(resources, stateFromObject(obj, true, "ready"))
+		}
+	}
+	return resources, nil
+}
+
+func labelsMatch(have map[string]string, want map[string]string) bool {
+	for k, v := range want {
+		if have[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 func fakeObjectKey(obj *unstructured.Unstructured) string {

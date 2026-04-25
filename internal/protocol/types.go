@@ -246,11 +246,12 @@ type AdapterDeclarativeApplyResponse struct {
 }
 
 type AdapterObserveObjectsRequest struct {
-	Operation string                             `json:"operation"`
-	Context   AdapterGenerateInstallationContext `json:"context"`
-	Target    AdapterTargetIntegrationContext    `json:"target"`
-	Objects   []map[string]any                   `json:"objects"`
-	Namespace string                             `json:"namespace,omitempty"`
+	Operation      string                             `json:"operation"`
+	Context        AdapterGenerateInstallationContext `json:"context"`
+	Target         AdapterTargetIntegrationContext    `json:"target"`
+	Objects        []map[string]any                   `json:"objects"`
+	Namespace      string                             `json:"namespace,omitempty"`
+	LabelSelectors []LabelSelector                    `json:"label_selectors,omitempty"`
 }
 
 type AdapterObserveObjectsResponse struct {
