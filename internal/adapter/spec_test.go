@@ -384,7 +384,15 @@ func TestEnsureDockerRegistrySecretCreatesSecret(t *testing.T) {
 	if state.Name != "ghcr-pull" || state.Namespace != "ns" {
 		t.Errorf("state name/ns = %s/%s, want ghcr-pull/ns", state.Name, state.Namespace)
 	}
-	if _, ok := fake.objects["ns/ghcr-pull"]; !ok {
+	expectedKey := fakeObjectKey(&unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":      "ghcr-pull",
+			"namespace": "ns",
+		},
+	}})
+	if _, ok := fake.objects[expectedKey]; !ok {
 		t.Error("fake executor did not record the Secret object")
 	}
 }

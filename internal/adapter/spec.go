@@ -294,11 +294,11 @@ func decodeEnsureDockerRegistrySecretRequest(req model.AdapterExecuteIntegration
 	if req.Integration.Instance.Name == "" || req.Integration.Type.Name == "" {
 		return model.AdapterEnsureDockerRegistrySecretRequest{}, fmt.Errorf("ensure_docker_registry_secret requires integration context")
 	}
-	namespace := stringValue(req.Input["namespace"])
-	secretName := stringValue(req.Input["secret_name"])
-	registry := stringValue(req.Input["registry"])
-	username := stringValue(req.Input["username"])
-	password := stringValue(req.Input["password"])
+	namespace := strings.TrimSpace(stringValue(req.Input["namespace"]))
+	secretName := strings.TrimSpace(stringValue(req.Input["secret_name"]))
+	registry := strings.TrimSpace(stringValue(req.Input["registry"]))
+	username := strings.TrimSpace(stringValue(req.Input["username"]))
+	password := strings.TrimSpace(stringValue(req.Input["password"]))
 	if namespace == "" || secretName == "" || registry == "" || username == "" || password == "" {
 		return model.AdapterEnsureDockerRegistrySecretRequest{}, fmt.Errorf("ensure_docker_registry_secret requires namespace, secret_name, registry, username, password")
 	}
@@ -363,10 +363,13 @@ func decodeLabelSelectors(raw any) []model.LabelSelector {
 				ml[k] = s
 			}
 		}
+		if len(ml) == 0 {
+			continue // skip selectors with empty match_labels — too broad
+		}
 		out = append(out, model.LabelSelector{
-			APIVersion:  stringValue(m["api_version"]),
-			Kind:        stringValue(m["kind"]),
-			Namespace:   stringValue(m["namespace"]),
+			APIVersion:  strings.TrimSpace(stringValue(m["api_version"])),
+			Kind:        strings.TrimSpace(stringValue(m["kind"])),
+			Namespace:   strings.TrimSpace(stringValue(m["namespace"])),
 			MatchLabels: ml,
 		})
 	}
@@ -673,17 +676,31 @@ func ObserveObjects(ctx context.Context, req model.AdapterObserveObjectsRequest)
 		resources = append(resources, listed...)
 	}
 
-	observed := true
-	status := "observed"
-	for _, resource := range resources {
-		if !resource.Observed {
-			observed = false
+	var status string
+	var observed bool
+	if len(resources) == 0 {
+		observed = false
+		status = "not_found"
+	} else {
+		allObserved := true
+		allReady := true
+		for _, r := range resources {
+			if !r.Observed {
+				allObserved = false
+			}
+			if r.Status != "ready" && r.Status != "applied" && r.Status != "observed" {
+				allReady = false
+			}
+		}
+		switch {
+		case !allObserved:
 			status = "partial"
-			break
-		}
-		if strings.TrimSpace(resource.Status) == "not_ready" {
+		case !allReady:
 			status = "not_ready"
+		default:
+			status = "observed"
 		}
+		observed = allObserved
 	}
 
 	return model.AdapterObserveObjectsResponse{
@@ -1299,7 +1316,7 @@ func (f *fakeExecutor) List(_ context.Context, selectors []model.LabelSelector, 
 			if !labelsMatch(obj.GetLabels(), selector.MatchLabels) {
 				continue
 			}
-			resources = append(resources, stateFromObject(obj, true, "ready"))
+			resources = append(resources, stateFromObject(obj, true, deriveResourceStatus(obj)))
 		}
 	}
 	return resources, nil
@@ -1315,7 +1332,7 @@ func (f *fakeExecutor) UpsertDockerRegistrySecret(_ context.Context, req model.A
 		},
 		"type": "kubernetes.io/dockerconfigjson",
 	}}
-	f.objects[req.Namespace+"/"+req.SecretName] = obj
+	f.objects[fakeObjectKey(obj)] = obj
 	return stateFromObject(obj, true, "ready"), nil
 }
 

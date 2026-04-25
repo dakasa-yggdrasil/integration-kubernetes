@@ -34,9 +34,7 @@ func BuildDockerConfigJSON(registry, username, password string) ([]byte, error) 
 	payload := map[string]any{
 		"auths": map[string]any{
 			registry: map[string]any{
-				"username": username,
-				"password": password,
-				"auth":     auth,
+				"auth": auth,
 			},
 		},
 	}
