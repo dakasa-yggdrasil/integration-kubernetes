@@ -397,6 +397,109 @@ func TestEnsureDockerRegistrySecretCreatesSecret(t *testing.T) {
 	}
 }
 
+func TestUpdateContainerImagePatchesByContainerName(t *testing.T) {
+	fake := &fakeExecutor{objects: map[string]*unstructured.Unstructured{}}
+	// Pre-seed an existing Deployment with container named "adapter"
+	existing := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata":   map[string]any{"name": "yggdrasil", "namespace": "dakasa"},
+		"spec": map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{
+						map[string]any{
+							"name":  "adapter",
+							"image": "ghcr.io/old:v1",
+						},
+					},
+				},
+			},
+		},
+	}}
+	fake.objects[fakeObjectKey(existing)] = existing
+
+	req := model.AdapterUpdateContainerImageRequest{
+		Operation:       OperationUpdateContainerImage,
+		Namespace:       "dakasa",
+		DeploymentName:  "yggdrasil",
+		ContainerName:   "adapter",
+		Image:           "ghcr.io/new:v2",
+		ImagePullPolicy: "Always",
+	}
+	state, err := fake.UpdateContainerImage(context.Background(), req)
+	if err != nil {
+		t.Fatalf("UpdateContainerImage error: %v", err)
+	}
+	if state.Status != "updated" && state.Status != "ready" {
+		t.Errorf("state.Status = %q", state.Status)
+	}
+
+	// Verify the existing container's image was UPDATED (not duplicated)
+	updated := fake.objects[fakeObjectKey(existing)]
+	spec, _ := updated.Object["spec"].(map[string]any)
+	template, _ := spec["template"].(map[string]any)
+	podSpec, _ := template["spec"].(map[string]any)
+	containers, _ := podSpec["containers"].([]any)
+	if len(containers) != 1 {
+		t.Fatalf("containers count = %d, want 1 (must NOT duplicate)", len(containers))
+	}
+	container, _ := containers[0].(map[string]any)
+	if container["image"] != "ghcr.io/new:v2" {
+		t.Errorf("image = %v, want ghcr.io/new:v2", container["image"])
+	}
+	if container["imagePullPolicy"] != "Always" {
+		t.Errorf("imagePullPolicy = %v, want Always", container["imagePullPolicy"])
+	}
+	if container["name"] != "adapter" {
+		t.Errorf("container name changed: %v", container["name"])
+	}
+}
+
+func TestUpdateContainerImageRejectsUnknownContainer(t *testing.T) {
+	fake := &fakeExecutor{objects: map[string]*unstructured.Unstructured{}}
+	existing := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata":   map[string]any{"name": "yggdrasil", "namespace": "dakasa"},
+		"spec": map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{map[string]any{"name": "adapter", "image": "old"}},
+				},
+			},
+		},
+	}}
+	fake.objects[fakeObjectKey(existing)] = existing
+
+	req := model.AdapterUpdateContainerImageRequest{
+		Operation:      OperationUpdateContainerImage,
+		Namespace:      "dakasa",
+		DeploymentName: "yggdrasil",
+		ContainerName:  "nonexistent", // wrong name — must FAIL, not duplicate
+		Image:          "new:v2",
+	}
+	_, err := fake.UpdateContainerImage(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for unknown container — must NEVER silently duplicate")
+	}
+}
+
+func TestUpdateContainerImageRejectsMissingDeployment(t *testing.T) {
+	fake := &fakeExecutor{objects: map[string]*unstructured.Unstructured{}}
+	req := model.AdapterUpdateContainerImageRequest{
+		Operation:      OperationUpdateContainerImage,
+		Namespace:      "dakasa",
+		DeploymentName: "nonexistent",
+		ContainerName:  "adapter",
+		Image:          "new:v2",
+	}
+	_, err := fake.UpdateContainerImage(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error when Deployment does not exist")
+	}
+}
+
 func asAnyMap(in map[string]string) map[string]any {
 	out := make(map[string]any, len(in))
 	for k, v := range in {
