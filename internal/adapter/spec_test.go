@@ -334,3 +334,106 @@ func TestExecuteApplyManifestRejectsNonObjectManifest(t *testing.T) {
 		t.Fatal("expected non-object with.manifest to fail")
 	}
 }
+
+func TestObserveObjectsByLabelSelector(t *testing.T) {
+	mkPod := func(name string, labels map[string]string) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Pod",
+			"metadata": map[string]any{
+				"name":      name,
+				"namespace": "ns",
+				"labels":    asAnyMap(labels),
+			},
+		}}
+	}
+	fake := &fakeExecutor{objects: map[string]*unstructured.Unstructured{
+		"a": mkPod("a", map[string]string{"app": "foo"}),
+		"b": mkPod("b", map[string]string{"app": "foo"}),
+		"c": mkPod("c", map[string]string{"app": "bar"}),
+	}}
+
+	selectors := []model.LabelSelector{{
+		APIVersion: "v1", Kind: "Pod", Namespace: "ns",
+		MatchLabels: map[string]string{"app": "foo"},
+	}}
+
+	results, err := fake.List(context.Background(), selectors, "default")
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if got := len(results); got != 2 {
+		t.Errorf("List result count = %d, want 2", got)
+	}
+}
+
+func TestEnsureDockerRegistrySecretCreatesSecret(t *testing.T) {
+	fake := &fakeExecutor{objects: map[string]*unstructured.Unstructured{}}
+	req := model.AdapterEnsureDockerRegistrySecretRequest{
+		Operation:  OperationEnsureDockerRegistrySecret,
+		Namespace:  "ns",
+		SecretName: "ghcr-pull",
+		Registry:   "ghcr.io",
+		Username:   "alice",
+		Password:   "secret",
+	}
+	state, err := fake.UpsertDockerRegistrySecret(context.Background(), req)
+	if err != nil {
+		t.Fatalf("UpsertDockerRegistrySecret error: %v", err)
+	}
+	if state.Name != "ghcr-pull" || state.Namespace != "ns" {
+		t.Errorf("state name/ns = %s/%s, want ghcr-pull/ns", state.Name, state.Namespace)
+	}
+	expectedKey := fakeObjectKey(&unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":      "ghcr-pull",
+			"namespace": "ns",
+		},
+	}})
+	if _, ok := fake.objects[expectedKey]; !ok {
+		t.Error("fake executor did not record the Secret object")
+	}
+}
+
+func asAnyMap(in map[string]string) map[string]any {
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func TestStateFromObjectIncludesSpec(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]any{
+			"name":      "foo",
+			"namespace": "ns",
+		},
+		"spec": map[string]any{
+			"replicas": int64(3),
+			"selector": map[string]any{
+				"matchLabels": map[string]any{"app": "foo"},
+			},
+		},
+		"status": map[string]any{
+			"readyReplicas": int64(3),
+		},
+	}}
+
+	state := stateFromObject(obj, true, "ready")
+	specMap, _ := state.Metadata["spec"].(map[string]any)
+	if specMap == nil {
+		t.Fatal("stateFromObject must surface .spec in metadata")
+	}
+	if specMap["replicas"] != int64(3) {
+		t.Errorf("spec.replicas = %v, want 3", specMap["replicas"])
+	}
+	// existing .status surfacing still works
+	if _, ok := state.Metadata["status"].(map[string]any); !ok {
+		t.Error("stateFromObject must still surface .status")
+	}
+}

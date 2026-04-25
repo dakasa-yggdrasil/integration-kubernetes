@@ -246,11 +246,12 @@ type AdapterDeclarativeApplyResponse struct {
 }
 
 type AdapterObserveObjectsRequest struct {
-	Operation string                             `json:"operation"`
-	Context   AdapterGenerateInstallationContext `json:"context"`
-	Target    AdapterTargetIntegrationContext    `json:"target"`
-	Objects   []map[string]any                   `json:"objects"`
-	Namespace string                             `json:"namespace,omitempty"`
+	Operation      string                             `json:"operation"`
+	Context        AdapterGenerateInstallationContext `json:"context"`
+	Target         AdapterTargetIntegrationContext    `json:"target"`
+	Objects        []map[string]any                   `json:"objects"`
+	Namespace      string                             `json:"namespace,omitempty"`
+	LabelSelectors []LabelSelector                    `json:"label_selectors,omitempty"`
 }
 
 type AdapterObserveObjectsResponse struct {
@@ -259,6 +260,19 @@ type AdapterObserveObjectsResponse struct {
 	Observed  bool                        `json:"observed,omitempty"`
 	Resources []InstallationResourceState `json:"resources,omitempty"`
 	Metadata  map[string]any              `json:"metadata,omitempty"`
+}
+
+// LabelSelector identifies a set of Kubernetes objects by kind + match
+// labels. Used by observe_objects to find pods created by a Deployment
+// (name derived from ReplicaSet hash) without knowing them ahead of
+// time. All three fields are required; empty match_labels would
+// select every object of the given kind in the namespace, which is
+// too broad for any legitimate caller.
+type LabelSelector struct {
+	APIVersion  string            `json:"api_version"`
+	Kind        string            `json:"kind"`
+	Namespace   string            `json:"namespace"`
+	MatchLabels map[string]string `json:"match_labels"`
 }
 
 type AdapterReconcileInstallationRequest struct {
@@ -285,6 +299,28 @@ type InstallationResourceState struct {
 	Status    string         `json:"status,omitempty"`
 	Observed  bool           `json:"observed,omitempty"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+// AdapterEnsureDockerRegistrySecretRequest is the request shape for
+// the ensure_docker_registry_secret operation. The adapter creates or
+// updates a Secret (type kubernetes.io/dockerconfigjson) containing
+// the base64-encoded credentials for a single registry.
+type AdapterEnsureDockerRegistrySecretRequest struct {
+	Operation  string                             `json:"operation"`
+	Context    AdapterGenerateInstallationContext `json:"context,omitempty"`
+	Target     AdapterTargetIntegrationContext    `json:"target,omitempty"`
+	Namespace  string                             `json:"namespace"`
+	SecretName string                             `json:"secret_name"`
+	Registry   string                             `json:"registry"`
+	Username   string                             `json:"username"`
+	Password   string                             `json:"password"`
+}
+
+type AdapterEnsureDockerRegistrySecretResponse struct {
+	Operation string                    `json:"operation,omitempty"`
+	Status    string                    `json:"status,omitempty"`
+	Resource  InstallationResourceState `json:"resource"`
+	Metadata  map[string]any            `json:"metadata,omitempty"`
 }
 
 type AdapterDiscoverInstallationStateRequest struct {

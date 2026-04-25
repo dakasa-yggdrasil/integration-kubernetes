@@ -39,7 +39,7 @@ func ExecuteHandler(logger *zap.Logger) Handler {
 		}
 
 		switch operation {
-		case adapter.OperationDeclarativeApply:
+		case adapter.OperationDeclarativeApply, adapter.OperationApplyManifest:
 			var req model.AdapterDeclarativeApplyRequest
 			if err := json.Unmarshal(d.Body, &req); err != nil {
 				return failure("bad_request", err, logger)
@@ -57,6 +57,16 @@ func ExecuteHandler(logger *zap.Logger) Handler {
 			response, err := adapter.ObserveObjects(ctx, req)
 			if err != nil {
 				return failure("observe_failed", err, logger)
+			}
+			return success(response)
+		case adapter.OperationEnsureDockerRegistrySecret:
+			var req model.AdapterEnsureDockerRegistrySecretRequest
+			if err := json.Unmarshal(d.Body, &req); err != nil {
+				return failure("bad_request", err, logger)
+			}
+			response, err := adapter.EnsureDockerRegistrySecret(ctx, req)
+			if err != nil {
+				return failure("execute_failed", err, logger)
 			}
 			return success(response)
 		}
