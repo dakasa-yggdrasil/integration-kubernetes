@@ -346,6 +346,31 @@ type AdapterUpdateContainerImageResponse struct {
 	Metadata  map[string]any            `json:"metadata,omitempty"`
 }
 
+// AdapterCreateJobFromCronJobRequest is the typed shape for the
+// create_job_from_cronjob operation. The adapter copies the named
+// CronJob's jobTemplate into a fresh Job and optionally polls until
+// terminal status (succeeded or failed beyond backoffLimit).
+type AdapterCreateJobFromCronJobRequest struct {
+	Operation         string                          `json:"operation"`
+	Target            AdapterTargetIntegrationContext `json:"target"`
+	CronJobName       string                          `json:"cronjob_name"`
+	Namespace         string                          `json:"namespace,omitempty"`
+	WaitForCompletion bool                            `json:"wait_for_completion,omitempty"`
+	TimeoutSeconds    int                             `json:"timeout_seconds,omitempty"`
+	Reason            string                          `json:"reason,omitempty"`
+}
+
+type AdapterCreateJobFromCronJobResponse struct {
+	Operation   string         `json:"operation,omitempty"`
+	Status      string         `json:"status,omitempty"`
+	JobName     string         `json:"job_name,omitempty"`
+	Namespace   string         `json:"namespace,omitempty"`
+	CronJobName string         `json:"cronjob_name,omitempty"`
+	Succeeded   int64          `json:"succeeded,omitempty"`
+	Failed      int64          `json:"failed,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
 type AdapterDiscoverInstallationStateRequest struct {
 	Operation   string                                        `json:"operation"`
 	Context     AdapterGenerateInstallationContext            `json:"context"`

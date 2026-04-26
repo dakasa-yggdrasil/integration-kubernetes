@@ -26,7 +26,7 @@ import (
 
 const (
 	Provider                  = "kubernetes"
-	AdapterVersion            = "1.2.0"
+	AdapterVersion            = "1.3.0"
 	OperationDeclarativeApply = "declarative_apply"
 	// OperationApplyManifest is the single-object variant of
 	// declarative_apply. Callers pass exactly one Kubernetes object under
@@ -39,6 +39,7 @@ const (
 	OperationObserveObjects             = "observe_objects"
 	OperationEnsureDockerRegistrySecret = "ensure_docker_registry_secret"
 	OperationUpdateContainerImage       = "update_container_image"
+	// OperationCreateJobFromCronJob defined in spec_extra.go.
 	ModeServerSideApply                 = "server_side_apply"
 	DefaultFieldManager                 = "yggdrasil"
 
@@ -52,6 +53,7 @@ var SupportedExecuteOperations = []string{
 	OperationObserveObjects,
 	OperationEnsureDockerRegistrySecret,
 	OperationUpdateContainerImage,
+	OperationCreateJobFromCronJob,
 }
 
 type clusterConfig struct {
@@ -519,6 +521,22 @@ func Execute(ctx context.Context, req model.AdapterExecuteIntegrationRequest) (m
 			Output:     response,
 			Metadata:   response.Metadata,
 		}, nil
+	case OperationCreateJobFromCronJob:
+		typedReq, err := decodeCreateJobFromCronJobRequest(req)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		response, err := CreateJobFromCronJob(ctx, typedReq)
+		if err != nil {
+			return model.AdapterExecuteIntegrationResponse{}, err
+		}
+		return model.AdapterExecuteIntegrationResponse{
+			Operation:  operation,
+			Capability: firstNonEmptyString(strings.TrimSpace(req.Capability), operation),
+			Status:     response.Status,
+			Output:     response,
+			Metadata:   response.Metadata,
+		}, nil
 	default:
 		return model.AdapterExecuteIntegrationResponse{}, fmt.Errorf("unsupported operation %q", req.Operation)
 	}
@@ -858,6 +876,12 @@ func describeActionCatalog() []model.IntegrationActionDefinition {
 			Description:   "Create or update a Kubernetes Secret of type kubernetes.io/dockerconfigjson for image pull authentication.",
 			ResourceTypes: []string{"object"},
 			Idempotent:    true,
+		},
+		{
+			Name:          OperationCreateJobFromCronJob,
+			Description:   "Trigger an ad-hoc Job by copying a CronJob's jobTemplate. Used for backup/migration smoke tests without waiting for the schedule.",
+			ResourceTypes: []string{"object"},
+			Idempotent:    false,
 		},
 		{
 			Name:          OperationUpdateContainerImage,
